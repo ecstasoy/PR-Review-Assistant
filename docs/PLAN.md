@@ -10,7 +10,7 @@
 - **Day 2**：差异化（上下文扩展、风险识别、行内建议）
 - **Day 3**：打磨 + 录像 + 文档
 
-**模型选型**：先用单一 Provider（OpenAI 兼容协议，DeepSeek/OpenAI/Claude 任选最易拿 key 的），代码层抽象成 `LLMProvider` 接口，README 里写"未来支持多模型切换"。
+**模型选型**：先用单一 Provider（OpenAI 兼容协议，DeepSeek/OpenAI/Claude 任选最易拿 key 的），代码层抽象成 `LLMProvider` 接口。**按 stage 配不同 model**——summary/suggestions 用便宜档（如 deepseek-chat），risks 用 reasoner 档（如 deepseek-reasoner），以匹配各阶段的推理难度；README "模型选择"一节详写。
 
 **仓库结构**：monorepo，`/backend`（Go）+ `/frontend`（Next.js）+ `/docs`。每个 PR 只动一处。
 
@@ -40,7 +40,7 @@
 | # | PR 标题 | 预估 | 内容 |
 |---|---|---|---|
 | 7 | feat(backend): expand context by fetching full file content for changed files | 3h | 不止读 diff hunk，关键文件拉全文（控制 token 预算，超大文件只取相关函数） |
-| 8 | feat(backend): risk identification pass tagging files by severity | 3h | 第二轮 prompt：输出结构化 JSON（`[{file, severity, reason}]`），不和总结混 |
+| 8 | feat(backend): risk identification pass tagging files by severity | 3h | 第二轮 prompt：输出结构化 JSON（`[{file, severity, confidence, reason}]`）；**confidence ≥ 0.9 默认展开**，低 confidence 折叠以控制误报 |
 | 9 | feat(backend): per-hunk review comments as structured output | 3h | 第三轮 prompt：每个 hunk 给出 inline 建议（行号 + 类型 + 建议） |
 | 10 | feat(frontend): split-view diff viewer with AI annotations | 4h | 左 diff 右注释；用 `react-diff-viewer` 或类似库；点文件跳转 |
 | 11 | feat(backend): inject project conventions from README/CONTRIBUTING into prompt | 2h | 拉 repo 根的 README/CONTRIBUTING/CLAUDE.md，作为系统提示注入，提升"上下文理解" |
@@ -61,6 +61,8 @@
 | 15 | polish(frontend): visual cleanup, loading states, responsive | 3h | 配色、字号、骨架屏；不求美但求不丢分 |
 | 16 | docs: write comprehensive README with architecture, model choice, context strategy | 3h | 见下面"README 必写章节" |
 | 17 | docs: add demo PR examples and screenshots | 1h | 准备 2–3 个真实公开 PR 作为 demo 素材 |
+| 18 | ci: add GitHub Actions for go build/vet/test and pnpm build | 1h | `.github/workflows/ci.yml`，每个 PR 跑 backend + frontend 校验；评委看到绿勾加分 |
+| 19 | feat: self-review action — run the tool against its own PRs | 2h | `.github/workflows/review.yml` 调用 `backend/cmd/cli`（依赖 PR #4 已通），结果以 sticky comment 回灌；demo 视频亮点 |
 | — | 录 demo 视频 | 3h | 脚本 → 试录 → 正式录 → 上传 B 站 → README 加链接 |
 | — | 最终回归测试 + 缓冲 | 2h | 清状态、重跑、检查 commit 时间戳 |
 
@@ -70,10 +72,11 @@
 
 按这个顺序砍：
 
-1. **先砍** PR 10 的精美 diff 视图 → 退化成简单列表
-2. 再砍 PR 12 流式 → 改成普通请求 + loading
-3. 再砍 PR 11 项目约定注入
-4. **绝对不能砍**：PR 7（上下文扩展）、PR 8（风险识别）、PR 16（README）、Demo 视频
+1. **先砍** PR 19 自评审 Action（需要 CLI 模式，工程量最大）
+2. 再砍 PR 10 的精美 diff 视图 → 退化成简单列表
+3. 再砍 PR 12 流式 → 改成普通请求 + loading
+4. 再砍 PR 11 项目约定注入
+5. **绝对不能砍**：PR 7（上下文扩展）、PR 8（风险识别）、PR 16（README）、PR 18（CI 绿勾）、Demo 视频
 
 ---
 
