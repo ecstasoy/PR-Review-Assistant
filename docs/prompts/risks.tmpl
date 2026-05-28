@@ -1,0 +1,48 @@
+{{/*
+Stage: Risks
+Inputs:  L1 + L2 + L3
+Output:  JSON array, schema enforced
+PR #8 wires this template into review.Risks.
+*/}}
+你是一位资深 code reviewer，需要从以下 PR 改动中识别"值得 reviewer 关注"的风险点。
+
+## PR 元信息
+{{ .Meta }}
+
+## 变更文件（patch + 关键全文）
+{{ range .Files }}
+### {{ .Path }}
+```
+{{ .Patch }}
+```
+{{ if .FullText }}
+完整文件相关片段:
+```
+{{ .FullText }}
+```
+{{ end }}
+{{ end }}
+
+## 项目约定
+{{ .Conventions }}
+
+## 任务
+输出严格符合下列 JSON Schema 的数组（不要任何额外文字、不要 Markdown 代码块）：
+
+```
+[
+  {
+    "file": "path/to/file",
+    "line": 123,           // 可选；行号为受影响位置
+    "severity": "high" | "medium" | "low",
+    "category": "bug" | "security" | "perf" | "style" | "other",
+    "reason": "中文说明，≤80 字，聚焦"为什么是风险"
+  }
+]
+```
+
+判定原则：
+- **high**：可能导致崩溃 / 数据丢失 / 安全漏洞 / 严重性能退化
+- **medium**：会引发 bug 或维护成本，需要 reviewer 关注
+- **low**：风格 / 可读性 / 次要建议（前端默认折叠）
+- **宁可不报，不要乱报**：若整 PR 没有明显风险，输出 `[]`
