@@ -28,28 +28,89 @@
 
 ## 4. RAG / 代码图谱（L4 上下文）
 
-- `backend/internal/prctx/builder.go` 加 `L4 References` 字段
-- 新增 `backend/internal/index/`：负责构建/查询语义索引或符号图
-- `prctx.Builder.Build` 在 budget 允许时拼入 L4
+### 已留接口
+- `backend/internal/index/`：`Retriever` / `Embedder` / `Reference` / `NoopRetriever`
+- `backend/internal/prctx/builder.go`：`Context.L4References` 字段，v1 永远 nil
+- `prctx.Builder` 构造时接 `index.Retriever`；v1 注入 `NoopRetriever{}`
 
-## 5. 多语言 UI
+### v2 落地
+
+**embedding 时机**：lazy。第一次评审某仓库时 embed 本 PR 涉及文件 + 相邻定义。比"提交时全量索引"省钱，可增量。
+
+**存储选型**
+
+| 候选 | 适用 |
+|---|---|
+| sqlite-vec（推荐） | 单二进制部署、< 1M chunk；与现有 SQLite 共存零新依赖 |
+| Qdrant / pgvector | 多租户、共享后端 |
+| 内存 FAISS-like | 演示快、重启丢 |
+
+**token 预算**：当前 L1:L2:L3 = 4:5:1，引入 L4 改 3:4:1:2；`prctx/budget.go` 压缩顺序 L3 → L4 → L2 → L1。
+
+**chunking**：v2 决定。候选：tree-sitter 按函数 / 类切；超长函数二次按行段。
+
+## 5. Agent 循环 / 工具调用
+
+### 已留接口
+- `backend/internal/agent/`：`ToolSpec` / `Tool` / `Registry` / `Agent.Run`
+- `backend/internal/review/orchestrator.go`：`Stage` 接口；`Orchestrator.Stages []Stage`
+- `llm.Request` 未来加 `Tools []ToolSpec` 是新字段、向后兼容
+
+### v2 工具目录草稿
+
+| Tool | 用途 |
+|---|---|
+| `fetch_file(path)` | 拉仓库任意文件原文 |
+| `search_symbol(name)` | 搜符号定义 / 引用 |
+| `get_definition(file, line)` | 拿某符号的定义 |
+| `query_index(query, k)` | 调 `index.Retriever`，与 RAG 共底 |
+| `read_diff_hunk(file)` | 重读某文件的 diff hunk |
+
+### 循环参数
+- `MaxSteps = 5`（默认）防失控
+- 单步预算：单次 chat completion ≤ 2k token
+- 超限策略：返回部分结果 + 截断说明
+
+### 哪个 stage 换 agent
+- **risks** —— 风险识别天然分步（定位 → 验证 → 评级），agent 比单次 prompt 误报低
+- **suggestions** —— 建议生成需要回看上下文，agent 也合适
+- **summary** —— 一次过即可，不需要 agent
+
+### 接入示例（v2 代码）
+
+```go
+reg := agent.NewRegistry()
+reg.Register(&FetchFileTool{...})
+reg.Register(&SearchSymbolTool{...})
+risksAgent := agent.NewStage(reg, risksAgentPrompt, llmProvider)
+
+o.Stages = []review.Stage{
+    review.SummaryStage{},      // 不动
+    risksAgent,                 // 换成 agent
+    review.SuggestionsStage{},  // 不动
+}
+```
+
+Orchestrator 一行不改。
+
+## 6. 多语言 UI
 
 - `frontend/` 引入 `next-intl`
 - App Router 加 `[locale]` 段：`app/[locale]/page.tsx` 等
 - 文案集中到 `frontend/messages/{zh,en}.json`
 
-## 6. Docker / CI
+## 7. Docker / CI
 
 - 根目录加 `Dockerfile`（多阶段：Go builder + Node builder + 运行镜像）
 - `.github/workflows/ci.yml`：`go vet`、`go test`、`pnpm build`
 - 不改业务代码；只增打包/校验流程
 
-## 7. 私有部署
+## 8. 私有部署
 
 - 根目录加 `docker-compose.yml`：app + sqlite 数据卷
 - README 新增"自部署"章节
 
-## 8. CLI 模式（GitHub Actions 集成）
+## 9. CLI 模式（GitHub Actions 集成）
 
 - `backend/cmd/cli/main.go`：复用 `review.Orchestrator`，结果输出到 stdout (Markdown / JSON)
 - `.github/workflows/review.yml` 模板：在 PR 上跑 CLI 并把结果以评论发回
