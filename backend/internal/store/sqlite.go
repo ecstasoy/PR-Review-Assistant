@@ -13,10 +13,14 @@ type SQLiteStore struct {
 	db *sql.DB
 }
 
-// NewSQLiteStore 打开或创建数据库。PR #13 加 schema 自动迁移 + WAL
+// NewSQLiteStore 打开或创建数据库，并在返回前验证连接可用性。
 func NewSQLiteStore(path string) (*SQLiteStore, error) {
 	db, err := sql.Open("sqlite3", path)
 	if err != nil {
+		return nil, err
+	}
+	if err := db.PingContext(context.Background()); err != nil {
+		_ = db.Close()
 		return nil, err
 	}
 	return &SQLiteStore{db: db}, nil
