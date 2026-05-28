@@ -34,7 +34,19 @@ type Orchestrator struct {
 // userID 预留给 v2 权限校验；v1 始终传 nil。
 // PR #4 接 summary；PR #8 加 risks；PR #9 加 suggestions；PR #12 升级 SSE。
 func (o *Orchestrator) Run(ctx context.Context, pr github.PullRequest, userID *string) <-chan Event {
-	ch := make(chan Event)
+	ch := make(chan Event, 1)
+
+	data, err := json.Marshal(map[string]string{
+		"message": "orchestrator run not implemented",
+	})
+	if err != nil {
+		data = json.RawMessage(`{"message":"orchestrator run not implemented"}`)
+	}
+
+	ch <- Event{
+		Type: "error",
+		Data: data,
+	}
 	close(ch)
 	return ch
 }
