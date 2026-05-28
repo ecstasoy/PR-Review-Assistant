@@ -7,8 +7,8 @@ CREATE TABLE IF NOT EXISTS reviews (
     repo        TEXT NOT NULL,
     pr_number   INTEGER NOT NULL,
     head_sha    TEXT NOT NULL,
-    payload     TEXT NOT NULL,              -- 序列化的 review.Result
-    created_at  INTEGER NOT NULL,
+    payload     BLOB NOT NULL,             -- 序列化后的 review.Result 字节数据
+    created_at  INTEGER NOT NULL,          -- Unix 时间戳（秒）
     UNIQUE(owner, repo, pr_number, head_sha)
 );
 
