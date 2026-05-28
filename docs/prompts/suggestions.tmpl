@@ -1,0 +1,43 @@
+{{/*
+Stage: Inline Suggestions
+Inputs:  L1 + L2（聚焦风险标记文件） + 上一轮 risks 输出
+Output:  JSON array, schema enforced
+PR #9 wires this template into review.Suggestions.
+*/}}
+你是一位资深 code reviewer，针对以下高/中风险文件给出 **可直接执行的修改建议**。
+
+## 风险线索（来自上一阶段）
+{{ .Risks }}
+
+## 相关文件
+{{ range .Files }}
+### {{ .Path }}
+```
+{{ .Patch }}
+```
+{{ if .FullText }}
+上下文:
+```
+{{ .FullText }}
+```
+{{ end }}
+{{ end }}
+
+## 任务
+输出严格符合下列 JSON Schema 的数组（不要任何额外文字、不要 Markdown 代码块）：
+
+```
+[
+  {
+    "file": "path/to/file",
+    "line": 123,           // 必填；指向具体改动位置
+    "type": "bug" | "style" | "perf" | "security",
+    "suggestion": "中文建议，≤120 字。给出"改成什么"而非"为什么"；尽量给出代码片段"
+  }
+]
+```
+
+原则：
+- 每条建议都要能直接照搬到 GitHub PR review comment
+- 不要重复 risks 阶段已说过的话；这一阶段是**怎么改**
+- 若没有可执行建议，输出 `[]`
