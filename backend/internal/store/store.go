@@ -3,18 +3,19 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 )
 
 // Record 一条缓存评审
 type Record struct {
-	ID        string  // ulid
-	UserID    *string // v1 永远 nil；v2 OAuth 后填
+	ID        string          // ulid
+	UserID    *string         // v1 永远 nil；v2 OAuth 后填
 	Owner     string
 	Repo      string
 	PRNumber  int
 	HeadSHA   string
-	Payload   []byte // 序列化的 review.Result
+	Payload   json.RawMessage // 序列化的 review.Result(JSON)
 	CreatedAt time.Time
 }
 
