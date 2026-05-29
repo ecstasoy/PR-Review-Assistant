@@ -3,6 +3,7 @@ import type { Suggestion } from "@/lib/types";
 const typeClass = {
   bug: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
   security: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
+  concurrency: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
   perf: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
   style: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-400",
 } as const;
