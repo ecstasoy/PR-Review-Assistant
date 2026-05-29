@@ -92,5 +92,15 @@ func (f *RealFetcher) Fetch(ctx context.Context, rawURL string) (PullRequest, er
 	} else {
 		out.Conventions = conv
 	}
+
+	// CI 抓失败留空字符串（区分"未知"与"empty=pending"），上层 UI 自行处理"无 CI 信息"显示。
+	ci, checks, err := fetchChecks(ctx, f.client, owner, repo, out.HeadSHA)
+	if err != nil {
+		slog.Warn("fetch checks failed, continuing without CI",
+			"owner", owner, "repo", repo, "err", err)
+	} else {
+		out.CI = ci
+		out.Checks = checks
+	}
 	return out, nil
 }
