@@ -7,14 +7,17 @@ import (
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/github"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/llm"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/prctx"
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/store"
 )
 
 // Deps 是路由 + handler 需要的所有依赖。
 // 在 main 构造一次，向下注入。
+// Store 可为 nil（关闭缓存 + 历史功能），handler 必须 nil-safe。
 type Deps struct {
 	Fetcher  github.Fetcher
 	Provider llm.Provider
 	Builder  prctx.Builder
+	Store    store.Store
 }
 
 // Register 挂载 /api 路由组。
