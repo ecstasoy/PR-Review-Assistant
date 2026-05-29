@@ -50,6 +50,7 @@ type reviewDetail struct {
 	PRCreatedAt time.Time       `json:"pr_created_at,omitzero"`
 	Stats       gh.Stats        `json:"stats,omitzero"`
 	Checks      []gh.Check      `json:"checks,omitempty"`
+	Files       []gh.File       `json:"files,omitempty"` // 给 Diff 视图渲染用；list 端不返该大字段
 	Summary     string          `json:"summary"`
 	Risks       json.RawMessage `json:"risks,omitempty"`
 	Suggestions json.RawMessage `json:"suggestions,omitempty"`
@@ -155,6 +156,7 @@ func GetReview(d Deps) gin.HandlerFunc {
 				CI:         p.CI,
 				RiskCounts: countRisksBySeverity(p.Risks),
 			},
+			Files:       p.Files,
 			Author:      p.Author,
 			State:       p.State,
 			Labels:      p.Labels,

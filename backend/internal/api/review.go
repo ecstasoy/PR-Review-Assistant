@@ -73,6 +73,10 @@ func PostReview(d Deps) gin.HandlerFunc {
 			return
 		}
 
+		// 文件列表：让前端立即拿到 Diff 视图所需的文件树 + raw patch，无需等 stage
+		writeSSE(c.Writer, "files", pr.Files)
+		c.Writer.Flush()
+
 		// 缓存命中：同 (owner, repo, pr, head_sha) 有完整结果直接回放，跳过 LLM
 		if d.Store != nil {
 			if rec, gerr := d.Store.Get(ctx, pr.Owner, pr.Repo, pr.Number, pr.HeadSHA); gerr != nil {
@@ -174,6 +178,7 @@ func prMetaPayload(pr gh.PullRequest, sourceURL string) map[string]any {
 func persistReview(s store.Store, pr gh.PullRequest, summary string, risks, suggestions json.RawMessage) {
 	payload, err := json.Marshal(cachedPayload{
 		Title:       pr.Title,
+		Files:       pr.Files,
 		Author:      pr.Author,
 		State:       pr.State,
 		Labels:      pr.Labels,
@@ -265,4 +270,3 @@ func writeSSE(w http.ResponseWriter, eventType string, data any) {
 func writeSSERaw(w io.Writer, eventType string, data json.RawMessage) {
 	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, data)
 }
-

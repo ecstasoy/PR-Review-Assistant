@@ -27,6 +27,7 @@ type cachedPayload struct {
 	Stats       gh.Stats        `json:"stats,omitzero"`
 	CI          string          `json:"ci,omitempty"`
 	Checks      []gh.Check      `json:"checks,omitempty"`
+	Files       []gh.File       `json:"files,omitempty"` // detail 端点回放 Diff 视图所需文件树 + patch
 	Summary     string          `json:"summary"`
 	Risks       json.RawMessage `json:"risks"`
 	Suggestions json.RawMessage `json:"suggestions"`

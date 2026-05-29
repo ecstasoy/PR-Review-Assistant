@@ -65,12 +65,12 @@ type PullRequest struct {
 
 // File 一个改动文件。
 type File struct {
-	Path      string
-	Status    string // added | modified | removed | renamed
-	Patch     string // diff hunk
-	FullText  string // 可选；prctx.Builder 按预算决定是否拉全文
-	Additions int
-	Deletions int
+	Path      string `json:"path"`
+	Status    string `json:"status"` // added | modified | removed | renamed
+	Patch     string `json:"patch"`  // diff hunk
+	FullText  string `json:"-"`      // 仅 prctx.Builder 内部用，不上协议（体积大、前端不需要全文）
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
 }
 
 // Conventions 仓库级约定文件，作为 L3 上下文。
