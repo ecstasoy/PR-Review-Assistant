@@ -6,6 +6,7 @@ export interface Risk {
   line?: number;
   severity: "high" | "medium" | "low";
   category: "bug" | "security" | "perf" | "style" | "other";
+  confidence: number; // 0-1，LLM 自评把握度；≥ 0.9 默认展开
   reason: string;
 }
 
