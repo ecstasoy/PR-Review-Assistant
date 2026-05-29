@@ -21,7 +21,7 @@ func PostReview(d Deps) gin.HandlerFunc {
 		var body struct {
 			URL string `json:"url"`
 		}
-		if err := c.BindJSON(&body); err != nil {
+		if err := c.ShouldBindJSON(&body); err != nil {
 			c.JSON(400, gin.H{"error": "invalid request body"})
 			return
 		}
