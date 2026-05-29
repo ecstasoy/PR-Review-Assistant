@@ -16,6 +16,30 @@ import (
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/llm"
 )
 
+// dualMockProvider 按 req.JSONSchema 是否非 nil 切换 reply：
+// JSONSchema==nil（summary 阶段）→ textReply
+// JSONSchema!=nil（risks 阶段）→ jsonReply
+type dualMockProvider struct {
+	textReply string
+	jsonReply string
+}
+
+func (d dualMockProvider) Stream(_ context.Context, req llm.Request) (<-chan llm.Chunk, error) {
+	reply := d.textReply
+	if req.JSONSchema != nil {
+		reply = d.jsonReply
+	}
+	ch := make(chan llm.Chunk, 8)
+	go func() {
+		defer close(ch)
+		for _, w := range strings.Fields(reply) {
+			ch <- llm.Chunk{Text: w + " "}
+		}
+		ch <- llm.Chunk{Done: true}
+	}()
+	return ch, nil
+}
+
 // fakeFetcher 让测试注入预设的 PR 数据或错误。
 type fakeFetcher struct {
 	pr  gh.PullRequest
@@ -85,6 +109,69 @@ func TestPostReview_Success(t *testing.T) {
 	summary, _ := resp["summary"].(string)
 	if !strings.Contains(summary, "测试") || !strings.Contains(summary, "评审") {
 		t.Errorf("summary 应含 mock 推送的关键词，得到 %q", summary)
+	}
+
+	// mock 推非 JSON 文本，risks 阶段必失败 → 返空数组（不能是 null）
+	risks, ok := resp["risks"].([]any)
+	if !ok {
+		t.Errorf("risks 应是数组，得到 %T (%v)", resp["risks"], resp["risks"])
+	}
+	if len(risks) != 0 {
+		t.Errorf("mock provider 下 risks 应为空，得到 %d 条", len(risks))
+	}
+}
+
+func TestPostReview_SuccessWithRisks(t *testing.T) {
+	deps := Deps{
+		Fetcher: fakeFetcher{
+			pr: gh.PullRequest{
+				Owner:   "golang",
+				Repo:    "go",
+				Number:  42,
+				HeadSHA: "deadbeef",
+				Title:   "fix race",
+				Files: []gh.File{
+					{Path: "scanner.go", Status: "modified", Patch: "@@ -1 +1 @@"},
+				},
+			},
+		},
+		Provider: dualMockProvider{
+			textReply: "这是一段总结",
+			jsonReply: `{"risks":[{"file":"scanner.go","line":42,"severity":"high","category":"bug","confidence":0.92,"reason":"竞态"}]}`,
+		},
+	}
+
+	r := newTestRouter(t, deps)
+	w := postJSON(t, r, "/api/review", map[string]string{"url": "https://github.com/golang/go/pull/42"})
+
+	if w.Code != 200 {
+		t.Fatalf("status=%d, want 200; body=%s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Summary string `json:"summary"`
+		Risks   []struct {
+			File       string  `json:"file"`
+			Line       int     `json:"line"`
+			Severity   string  `json:"severity"`
+			Confidence float32 `json:"confidence"`
+		} `json:"risks"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("响应不是合法 JSON: %v", err)
+	}
+	if !strings.Contains(resp.Summary, "总结") {
+		t.Errorf("summary 字段错: %q", resp.Summary)
+	}
+	if len(resp.Risks) != 1 {
+		t.Fatalf("risks 数量 = %d，期望 1", len(resp.Risks))
+	}
+	r0 := resp.Risks[0]
+	if r0.File != "scanner.go" || r0.Severity != "high" || r0.Line != 42 {
+		t.Errorf("risks[0] 字段错: %+v", r0)
+	}
+	if r0.Confidence < 0.91 || r0.Confidence > 0.93 {
+		t.Errorf("Confidence = %v，期望 ~0.92", r0.Confidence)
 	}
 }
 
