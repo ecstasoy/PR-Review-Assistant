@@ -2,11 +2,13 @@ package github
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -100,6 +102,44 @@ func TestRealFetcher_Fetch_PRNotFound(t *testing.T) {
 	_, err := f.Fetch(context.Background(), "https://github.com/owner/repo/pull/1")
 	if err == nil {
 		t.Fatal("期望 404 错误，但 Fetch 没报错")
+	}
+}
+
+func TestRealFetcher_Fetch_AttachesConventions(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/golang/go/pulls/42", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"title": "x",
+			"head":  map[string]any{"sha": "head-sha"},
+		})
+	})
+	mux.HandleFunc("/repos/golang/go/pulls/42/files", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]any{})
+	})
+	mux.HandleFunc("/repos/golang/go/contents/README.md", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("ref"); got != "head-sha" {
+			t.Errorf("contents ref=%q，期望 head-sha", got)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"type":     "file",
+			"encoding": "base64",
+			"content":  base64.StdEncoding.EncodeToString([]byte("# Go\nuse modules")),
+		})
+	})
+	// CONTRIBUTING.md / CLAUDE.md / AGENTS.md 走 mux 默认 404
+
+	f, cleanup := stubServer(t, mux)
+	defer cleanup()
+
+	got, err := f.Fetch(context.Background(), "https://github.com/golang/go/pull/42")
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if !strings.Contains(got.Conventions.Readme, "use modules") {
+		t.Errorf("Conventions.Readme 应填充，得到 %q", got.Conventions.Readme)
+	}
+	if got.Conventions.Contributing != "" || got.Conventions.AgentDocs != "" {
+		t.Errorf("缺失文件应留空：%+v", got.Conventions)
 	}
 }
 
