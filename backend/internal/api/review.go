@@ -40,12 +40,17 @@ func PostReview(d Deps) gin.HandlerFunc {
 
 		pr, err := d.Fetcher.Fetch(ctx, url)
 		if err != nil {
-			if errors.Is(err, gh.ErrInvalidPRURL) {
+			switch {
+			case errors.Is(err, gh.ErrInvalidPRURL):
 				c.JSON(400, gin.H{"error": err.Error()})
-				return
+			case errors.Is(err, gh.ErrPRNotFound):
+				c.JSON(404, gin.H{"error": "PR 不存在或为私有仓库（请配置 GITHUB_TOKEN）"})
+			case errors.Is(err, gh.ErrAccessDenied):
+				c.JSON(403, gin.H{"error": "GitHub 拒绝访问（速率限制或权限不足）"})
+			default:
+				slog.Error("fetch PR", "err", err, "url", url)
+				c.JSON(502, gin.H{"error": "fetch upstream failed", "detail": err.Error()})
 			}
-			slog.Error("fetch PR", "err", err, "url", url)
-			c.JSON(502, gin.H{"error": "fetch upstream failed", "detail": err.Error()})
 			return
 		}
 
@@ -66,6 +71,14 @@ func PostReview(d Deps) gin.HandlerFunc {
 			"title":    pr.Title,
 		})
 		c.Writer.Flush()
+
+		// 空 PR 短路：没有可评审的文件改动时，不跑 LLM，直接发 info + done
+		if len(pr.Files) == 0 {
+			writeSSE(c.Writer, "info", map[string]string{"message": "该 PR 无可评审的文件改动"})
+			writeSSE(c.Writer, "done", map[string]any{})
+			c.Writer.Flush()
+			return
+		}
 
 		builder := d.Builder
 		if builder == nil {
