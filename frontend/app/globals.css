@@ -162,7 +162,7 @@
    语法色 / CI 色 / severity 色都注入；圆角同样
    ============================================================ */
 
-@theme inline {
+@theme {
   /* 字体 */
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);

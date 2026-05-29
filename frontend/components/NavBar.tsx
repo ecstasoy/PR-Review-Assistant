@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { History, Sparkles } from "lucide-react";
+import { History, Sparkle } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "./theme-toggle";
@@ -18,7 +18,7 @@ export function NavBar() {
     <header className="flex h-[52px] flex-shrink-0 items-center gap-3 border-b border-border bg-surface px-4">
       <Link href="/" className="flex items-center gap-2">
         <span className="inline-flex h-[26px] w-[26px] items-center justify-center rounded-md bg-accent text-accent-fg">
-          <Sparkles className="h-[15px] w-[15px]" strokeWidth={2.2} fill="currentColor" />
+          <Sparkle className="h-[15px] w-[15px]" strokeWidth={2.2} fill="currentColor" />
         </span>
         <span className="text-base font-semibold tracking-tight">PR Review</span>
       </Link>

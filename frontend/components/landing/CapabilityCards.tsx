@@ -1,4 +1,4 @@
-import { AlertTriangle, AlignLeft, Sparkles } from "lucide-react";
+import { AlertTriangle, AlignLeft, Sparkle } from "lucide-react";
 
 // 三张能力卡：变更总结 / 风险识别 / 行内建议
 // 30px 圆角图标块 + 标题 + 说明，grid-cols-3
@@ -14,7 +14,7 @@ const ITEMS = [
     desc: "按 severity / confidence 分级，定位到行",
   },
   {
-    icon: Sparkles,
+    icon: Sparkle,
     title: "行内建议",
     desc: "锚定到 diff 行，可一键复制到 GitHub",
   },

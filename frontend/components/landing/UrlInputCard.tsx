@@ -1,6 +1,6 @@
 "use client";
 
-import { CornerDownLeft, ExternalLink, GitPullRequest, Sparkles } from "lucide-react";
+import { CornerDownLeft, ExternalLink, GitPullRequest, Sparkle } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -70,7 +70,7 @@ export function UrlInputCard({ value, onChange, onSubmit, disabled }: Props) {
               "disabled:cursor-not-allowed disabled:opacity-50",
             )}
           >
-            <Sparkles className="h-[15px] w-[15px]" />
+            <Sparkle className="h-[15px] w-[15px]" />
             开始评审
             <CornerDownLeft className="h-[13px] w-[13px] opacity-80" />
           </button>
