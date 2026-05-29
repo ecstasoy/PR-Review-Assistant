@@ -86,7 +86,7 @@ func PostReview(d Deps) gin.HandlerFunc {
 	}
 }
 
-// mergeStages 并发跑 summary + risks，把各自的事件归并到一个 channel。
+// mergeStages 并发跑 summary + risks + suggestions，把各自的事件归并到一个 channel。
 // 任一 stage 失败会发一帧 error event 而非中止整条流。
 func mergeStages(ctx context.Context, c prctx.Context, p llm.Provider) <-chan review.Event {
 	merged := make(chan review.Event, 16)
@@ -95,6 +95,7 @@ func mergeStages(ctx context.Context, c prctx.Context, p llm.Provider) <-chan re
 	stages := []review.Stage{
 		review.SummaryStage{},
 		review.RisksStage{},
+		review.SuggestionsStage{},
 	}
 	wg.Add(len(stages))
 	for _, s := range stages {
