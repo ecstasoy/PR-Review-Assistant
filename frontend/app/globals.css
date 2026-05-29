@@ -1,9 +1,321 @@
 @import "tailwindcss";
 
+/* ============================================================
+   设计 token —— 翻译自 prototype/design_handoff_pr_review_ui
+   /design_reference/app/theme.css（保持字段名一致便于对照）
+   主题切换：[data-theme="light"|"dark"] on <html>
+   密度切换：[data-density="comfortable"|"compact"] on <html>
+   ============================================================ */
+
 :root {
   color-scheme: light dark;
+
+  /* 字体 family 走 next/font 注入的 CSS 变量（layout.tsx 设置） */
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+
+  /* 圆角 */
+  --r-sm: 5px;
+  --r-md: 7px;
+  --r-lg: 10px;
+
+  /* 密度（comfortable 为默认；compact 在 [data-density="compact"] 下覆盖） */
+  --row-h: 30px;
+  --pad-y: 8px;
+  --pad-x: 12px;
+  --fs-base: 13.5px;
+  --fs-sm: 12px;
+  --fs-xs: 11px;
+  --fs-code: 12.5px;
+  --gap: 14px;
+
+  /* accent —— 默认 monochrome（开发者工具气质） */
+  --accent: #18181b;
+  --accent-fg: #ffffff;
+  --accent-soft: rgba(24, 24, 27, 0.08);
 }
 
+[data-density="compact"] {
+  --row-h: 26px;
+  --pad-y: 6px;
+  --pad-x: 10px;
+  --fs-base: 13px;
+  --fs-sm: 11.5px;
+  --fs-xs: 10.5px;
+  --fs-code: 12px;
+  --gap: 10px;
+}
+
+/* ---------- LIGHT（默认） ---------- */
+[data-theme="light"],
+:root:not([data-theme="dark"]) {
+  color-scheme: light;
+  --bg: #fafafa;
+  --bg-deep: #f1f1f2;
+  --surface: #ffffff;
+  --surface-2: #f6f6f7;
+  --surface-3: #efefef;
+  --surface-hover: #f4f4f5;
+  --border: #e4e4e7;
+  --border-strong: #d4d4d8;
+  --text: #18181b;
+  --text-2: #3f3f46;
+  --muted: #71717a;
+  --faint: #a1a1aa;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.14);
+
+  /* severity */
+  --high: #b42318;
+  --high-bg: #fef3f2;
+  --high-bd: #fecdca;
+  --med: #b54708;
+  --med-bg: #fffaeb;
+  --med-bd: #fedf89;
+  --low: #52525b;
+  --low-bg: #f4f4f5;
+  --low-bd: #e4e4e7;
+
+  /* diff */
+  --add-bg: #e6ffec;
+  --add-bd: #aceebb;
+  --add-gutter: #ccffd8;
+  --del-bg: #ffebe9;
+  --del-bd: #ffc1bd;
+  --del-gutter: #ffd7d5;
+  --code-num: #8b949e;
+
+  /* syntax */
+  --tok-kw: #8250df;
+  --tok-str: #0a3069;
+  --tok-num: #0550ae;
+  --tok-com: #6e7781;
+
+  /* status (CI / 通用) */
+  --ok: #1f8a5b;
+  --ok-bg: #e7f6ef;
+  --fail: #b42318;
+  --pending: #b54708;
+  --info: #2a6fdb;
+}
+
+/* ---------- DARK ---------- */
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #09090b;
+  --bg-deep: #060607;
+  --surface: #111113;
+  --surface-2: #161618;
+  --surface-3: #1c1c1f;
+  --surface-hover: #1a1a1d;
+  --border: #262629;
+  --border-strong: #34343a;
+  --text: #f4f4f5;
+  --text-2: #d4d4d8;
+  --muted: #8b8b93;
+  --faint: #5c5c63;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 16px 50px rgba(0, 0, 0, 0.65);
+
+  --high: #ff6b5e;
+  --high-bg: rgba(255, 107, 94, 0.1);
+  --high-bd: rgba(255, 107, 94, 0.32);
+  --med: #f5b544;
+  --med-bg: rgba(245, 181, 68, 0.1);
+  --med-bd: rgba(245, 181, 68, 0.3);
+  --low: #a1a1aa;
+  --low-bg: rgba(161, 161, 170, 0.1);
+  --low-bd: #2c2c30;
+
+  --add-bg: rgba(46, 160, 67, 0.15);
+  --add-bd: rgba(46, 160, 67, 0.4);
+  --add-gutter: rgba(46, 160, 67, 0.28);
+  --del-bg: rgba(248, 81, 73, 0.15);
+  --del-bd: rgba(248, 81, 73, 0.4);
+  --del-gutter: rgba(248, 81, 73, 0.28);
+  --code-num: #6e7681;
+
+  --tok-kw: #c297ff;
+  --tok-str: #8ddb8c;
+  --tok-num: #79c0ff;
+  --tok-com: #7d8590;
+
+  --ok: #3fb950;
+  --ok-bg: rgba(63, 185, 80, 0.12);
+  --fail: #ff6b5e;
+  --pending: #f5b544;
+  --info: #4a8df0;
+
+  /* dark 下重设 accent（单调白） */
+  --accent: #f4f4f5;
+  --accent-fg: #18181b;
+  --accent-soft: rgba(244, 244, 245, 0.12);
+}
+
+/* ============================================================
+   Tailwind v4 @theme：把 CSS 变量暴露成 utility class
+   bg-bg / bg-surface / text-text / text-muted / border-border …
+   语法色 / CI 色 / severity 色都注入；圆角同样
+   ============================================================ */
+
+@theme inline {
+  /* 字体 */
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  /* 文字尺寸 */
+  --text-base: var(--fs-base);
+  --text-sm: var(--fs-sm);
+  --text-xs: var(--fs-xs);
+  --text-code: var(--fs-code);
+
+  /* 圆角 */
+  --radius-sm: var(--r-sm);
+  --radius-md: var(--r-md);
+  --radius-lg: var(--r-lg);
+
+  /* 阴影 */
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+
+  /* 表面色（语义化） */
+  --color-bg: var(--bg);
+  --color-bg-deep: var(--bg-deep);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-surface-hover: var(--surface-hover);
+
+  /* 边框 */
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+
+  /* 文字 */
+  --color-text: var(--text);
+  --color-text-2: var(--text-2);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+
+  /* accent */
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+
+  /* severity */
+  --color-high: var(--high);
+  --color-high-bg: var(--high-bg);
+  --color-high-bd: var(--high-bd);
+  --color-med: var(--med);
+  --color-med-bg: var(--med-bg);
+  --color-med-bd: var(--med-bd);
+  --color-low: var(--low);
+  --color-low-bg: var(--low-bg);
+  --color-low-bd: var(--low-bd);
+
+  /* status / CI */
+  --color-ok: var(--ok);
+  --color-ok-bg: var(--ok-bg);
+  --color-fail: var(--fail);
+  --color-pending: var(--pending);
+  --color-info: var(--info);
+
+  /* diff */
+  --color-add-bg: var(--add-bg);
+  --color-add-bd: var(--add-bd);
+  --color-add-gutter: var(--add-gutter);
+  --color-del-bg: var(--del-bg);
+  --color-del-bd: var(--del-bd);
+  --color-del-gutter: var(--del-gutter);
+  --color-code-num: var(--code-num);
+
+  /* syntax */
+  --color-tok-kw: var(--tok-kw);
+  --color-tok-str: var(--tok-str);
+  --color-tok-num: var(--tok-num);
+  --color-tok-com: var(--tok-com);
+
+  /* 动画 */
+  --animate-spin: spin 0.7s linear infinite;
+  --animate-pulse-dot: pulse-dot 1s ease-in-out infinite;
+  --animate-fade-up: fade-up 0.32s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+  --animate-fade-in: fade-in 0.3s ease both;
+  --animate-caret-blink: caret-blink 1s steps(2, end) infinite;
+  --animate-shimmer: shimmer 1.4s linear infinite;
+}
+
+/* ============================================================
+   基础样式
+   ============================================================ */
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; }
+
 body {
-  @apply bg-white text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100;
+  font-family: var(--font-sans);
+  font-size: var(--fs-base);
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+code, .mono {
+  font-family: var(--font-mono);
+  font-feature-settings: "ss01", "cv01";
+}
+
+::selection { background: var(--accent-soft); }
+
+/* 细滚动条（dev-tool 风格） */
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 99px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--faint);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-track { background: transparent; }
+
+button { font-family: inherit; }
+button:not(:disabled) { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+input, textarea { font-family: inherit; }
+
+/* ============================================================
+   keyframes
+   ============================================================ */
+
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes caret-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* shimmer skeleton helper */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--surface-2) 25%,
+    var(--surface-hover) 50%,
+    var(--surface-2) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+  border-radius: var(--r-sm);
 }
