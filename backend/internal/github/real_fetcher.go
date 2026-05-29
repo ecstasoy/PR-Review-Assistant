@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	gh "github.com/google/go-github/v66/github"
 )
@@ -22,9 +23,9 @@ func NewRealFetcher(token string) *RealFetcher {
 }
 
 // Fetch 实现 Fetcher。
-// 拉 PR meta + 改动文件列表
-// 文件列表上限 100；超出由 PR #7 在 prctx 层裁剪。
-// Conventions 留空，PR #11 实施。
+// 拉 PR meta + 改动文件列表 + 仓库根约定文件
+// 文件列表上限 100；超出由 prctx 层按预算裁剪。
+// Conventions 抓失败降级（warn 日志 + 空 Conventions），不阻塞主流程。
 func (f *RealFetcher) Fetch(ctx context.Context, rawURL string) (PullRequest, error) {
 	owner, repo, number, err := ParseURL(rawURL)
 	if err != nil {
@@ -57,6 +58,14 @@ func (f *RealFetcher) Fetch(ctx context.Context, rawURL string) (PullRequest, er
 			Additions: file.GetAdditions(),
 			Deletions: file.GetDeletions(),
 		})
+	}
+
+	conv, err := fetchConventions(ctx, f.client, owner, repo, out.HeadSHA)
+	if err != nil {
+		slog.Warn("fetch conventions failed, continuing without L3",
+			"owner", owner, "repo", repo, "err", err)
+	} else {
+		out.Conventions = conv
 	}
 	return out, nil
 }
