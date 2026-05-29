@@ -262,3 +262,69 @@ func TestPostReview_FetcherError(t *testing.T) {
 		t.Errorf("status=%d, want 502; body=%s", res.StatusCode, body)
 	}
 }
+
+func TestPostReview_EmptyPR_ShortCircuits(t *testing.T) {
+	srv := startTestServer(t, Deps{
+		Fetcher: fakeFetcher{
+			pr: gh.PullRequest{
+				Owner: "o", Repo: "r", Number: 1, HeadSHA: "sha",
+				Title: "empty PR", Files: nil,
+			},
+		},
+		Provider: llm.NewMockProvider(),
+	})
+
+	res, body := postJSON(t, srv, "/api/review", map[string]string{"url": "https://github.com/o/r/pull/1"})
+	if res.StatusCode != 200 {
+		t.Fatalf("status=%d, want 200; body=%s", res.StatusCode, body)
+	}
+
+	frames := parseSSE(body)
+	var sawInfo, sawDone bool
+	for _, f := range frames {
+		switch f.Type {
+		case "pr":
+			// OK，首帧
+		case "info":
+			sawInfo = true
+			if !strings.Contains(f.Data, "无可评审") {
+				t.Errorf("info 消息错: %s", f.Data)
+			}
+		case "done":
+			sawDone = true
+		case "summary_delta", "risks_done", "suggestions_done":
+			t.Errorf("空 PR 不应跑 stage，得到 %s", f.Type)
+		}
+	}
+	if !sawInfo {
+		t.Error("缺 info 帧")
+	}
+	if !sawDone {
+		t.Error("缺 done 帧")
+	}
+}
+
+func TestPostReview_PRNotFound(t *testing.T) {
+	srv := startTestServer(t, Deps{
+		Fetcher:  fakeFetcher{err: gh.ErrPRNotFound},
+		Provider: llm.NewMockProvider(),
+	})
+	res, body := postJSON(t, srv, "/api/review", map[string]string{"url": "https://github.com/o/r/pull/1"})
+	if res.StatusCode != 404 {
+		t.Errorf("status=%d, want 404; body=%s", res.StatusCode, body)
+	}
+	if !strings.Contains(body, "GITHUB_TOKEN") {
+		t.Errorf("错误消息应提示设置 GITHUB_TOKEN，得到 %s", body)
+	}
+}
+
+func TestPostReview_AccessDenied(t *testing.T) {
+	srv := startTestServer(t, Deps{
+		Fetcher:  fakeFetcher{err: gh.ErrAccessDenied},
+		Provider: llm.NewMockProvider(),
+	})
+	res, body := postJSON(t, srv, "/api/review", map[string]string{"url": "https://github.com/o/r/pull/1"})
+	if res.StatusCode != 403 {
+		t.Errorf("status=%d, want 403; body=%s", res.StatusCode, body)
+	}
+}
