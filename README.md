@@ -104,7 +104,7 @@ Token 预算默认按 **L1:L2:L3 = 4:5:1** 分配；超限时按 L3 → L2 → L
 
 1. **多模型 A/B 对比**：同 PR 跑多模型，结果并排展示
 2. **GitHub App 化**：从 Web 工具升级为 PR 自动评论 bot
-3. **代码库 RAG**：跨文件检索定义，借鉴 Greptile
+3. **代码库 RAG（异步索引）**：跨文件检索定义补全 L4 上下文，借鉴 Greptile；首次评审同步跑 L1-L3 即返，索引任务投递消息队列由后台 worker 处理（embedding 全仓 ~分钟级），第二次评审起命中 RAG；MQ 选型 v2 用 Redis Streams 或嵌入式 NATS，不破坏 SSE 流式体验
 4. **多 agent 自验证**：风险识别二次校验过滤误报，借鉴 Anthropic Claude Code Review
 5. **自定义规则注入**：用户上传 review 规范
 6. **CI 集成**：CLI 模式 + GitHub Actions 产出报告
