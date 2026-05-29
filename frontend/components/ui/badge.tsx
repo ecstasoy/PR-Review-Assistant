@@ -86,7 +86,9 @@ export function CategoryBadge({
   category: Category | string; // 容忍未知值 → 走 other
   className?: string;
 }) {
-  const c = (category in categoryClass ? category : "other") as Category;
+  const c = (
+    Object.prototype.hasOwnProperty.call(categoryClass, category) ? category : "other"
+  ) as Category;
   return (
     <span
       className={cn(

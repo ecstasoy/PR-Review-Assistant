@@ -49,6 +49,7 @@
 /* ---------- LIGHT（默认） ---------- */
 [data-theme="light"],
 :root:not([data-theme="dark"]) {
+  color-scheme: light;
   --bg: #fafafa;
   --bg-deep: #f1f1f2;
   --surface: #ffffff;
@@ -102,6 +103,7 @@
 
 /* ---------- DARK ---------- */
 [data-theme="dark"] {
+  color-scheme: dark;
   --bg: #09090b;
   --bg-deep: #060607;
   --surface: #111113;
@@ -283,7 +285,9 @@ code, .mono {
 }
 ::-webkit-scrollbar-track { background: transparent; }
 
-button { font-family: inherit; cursor: pointer; }
+button { font-family: inherit; }
+button:not(:disabled) { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
 input, textarea { font-family: inherit; }
 
 /* ============================================================

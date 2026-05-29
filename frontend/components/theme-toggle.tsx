@@ -31,6 +31,8 @@ export function ThemeToggle({ className }: { className?: string }) {
   if (theme === null) {
     return (
       <button
+        type="button"
+        disabled
         aria-label="切换主题"
         className={cn(
           "inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted",

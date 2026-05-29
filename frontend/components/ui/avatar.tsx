@@ -25,7 +25,7 @@ export interface AvatarProps extends VariantProps<typeof avatarVariants> {
 // Avatar 头像；src 优先；缺失则展示 name 首字母（fallback "?"）。
 // 不依赖 next/image —— GitHub avatar URL 通常带 ?s= 尺寸参数，img 直加即可。
 export function Avatar({ name, src, size, className }: AvatarProps) {
-  const initial = (name?.trim()[0] ?? "?").toUpperCase();
+  const initial = (name?.trim()?.[0] ?? "?").toUpperCase();
   if (src) {
     return (
       // eslint-disable-next-line @next/next/no-img-element

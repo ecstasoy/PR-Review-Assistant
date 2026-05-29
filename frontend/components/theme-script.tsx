@@ -4,9 +4,7 @@
 //
 // 注意：脚本内不能引外部模块；只能用全局 API（localStorage / matchMedia）。
 
-import { THEME_STORAGE_KEY } from "@/lib/theme";
-
 export function ThemeScript() {
-  const code = `(function(){try{var s=localStorage.getItem(${JSON.stringify(THEME_STORAGE_KEY)});var t=s==="dark"||s==="light"?s:(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();`;
+  const code = `(function(){var t;try{var s=localStorage.getItem("pr-review-theme");if(s==="dark"||s==="light")t=s;}catch(e){}if(!t){try{t=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";}catch(e){t="light";}}document.documentElement.setAttribute("data-theme",t);})();`;
   return <script dangerouslySetInnerHTML={{ __html: code }} />;
 }
