@@ -67,7 +67,11 @@ func PostReview(d Deps) gin.HandlerFunc {
 		})
 		c.Writer.Flush()
 
-		pCtx, err := d.Builder.Build(pr)
+		builder := d.Builder
+		if builder == nil {
+			builder = prctx.NewLayeredBuilder()
+		}
+		pCtx, err := builder.Build(pr)
 		if err != nil {
 			slog.Error("build prompt context", "err", err)
 			writeSSE(c.Writer, "error", map[string]string{"stage": "context", "message": err.Error()})
