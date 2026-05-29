@@ -16,7 +16,9 @@ export function FileStatusBadge({
   status: string;
   className?: string;
 }) {
-  const m = statusMeta[status] ?? { letter: "?", cls: "bg-surface-2 text-muted" };
+  const m = Object.prototype.hasOwnProperty.call(statusMeta, status)
+    ? statusMeta[status]
+    : { letter: "?", cls: "bg-surface-2 text-muted" };
   return (
     <span
       title={status}
