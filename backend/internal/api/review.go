@@ -156,6 +156,7 @@ func PostReview(d Deps) gin.HandlerFunc {
 // 用 context.Background() 与请求生命周期解耦：写缓存时客户端可能已断开。
 func persistReview(s store.Store, pr gh.PullRequest, summary string, risks, suggestions json.RawMessage) {
 	payload, err := json.Marshal(cachedPayload{
+		Title:       pr.Title,
 		Summary:     summary,
 		Risks:       risks,
 		Suggestions: suggestions,
