@@ -7,7 +7,7 @@
 
 ## POST /api/review
 
-提交 PR URL，跑总结阶段，**同步返 JSON**。SSE 流式响应是独立扩展。
+提交 PR URL，**预检通过后切到 SSE 流**，按帧推送各 stage 事件。
 
 ### 请求
 
@@ -26,79 +26,95 @@ Content-Type: application/json
 
 ### 响应
 
-**成功** `200 OK`
+**两段语义**：
 
-```json
-{
-  "id": "abc123def456789...",
-  "owner": "golang",
-  "repo": "go",
-  "pr": 42,
-  "url": "https://github.com/golang/go/pull/42",
-  "head_sha": "abc123def456789...",
-  "title": "fix race in scanner",
-  "summary": "这个 PR 修复了 scanner 中的竞态条件...\n- 关键文件：scanner.go\n- ...",
-  "risks": [
-    {
-      "file": "scanner.go",
-      "line": 42,
-      "severity": "high",
-      "category": "bug",
-      "confidence": 0.92,
-      "reason": "并发访问 mutable 字段未加锁"
-    }
-  ]
-}
+- **预检失败**（URL 错 / body 错 / GitHub 拉取失败）→ 普通 JSON 响应（4xx / 5xx），无 SSE
+- **预检通过**（GitHub 已返 PR 数据）→ `200 OK` + `Content-Type: text/event-stream`，按 SSE 帧推送
+
+### SSE 帧格式
+
+每帧形如：
+
+```
+event: <type>
+data: <JSON>
+
 ```
 
-| 字段 | 类型 | 说明 |
+（两个换行符结尾。）
+
+### 事件类型
+
+| event type | data schema | 出现时机 |
 |---|---|---|
-| `id` | string | 评审标识。v1 等于 `head_sha`；store 落地后改 ULID |
-| `owner` | string | PR 仓库 owner |
-| `repo` | string | PR 仓库名 |
-| `pr` | int | PR 编号 |
-| `url` | string | 原始输入 URL |
-| `head_sha` | string | PR head 提交 SHA |
-| `title` | string | PR 标题 |
-| `summary` | string | LLM 生成的 markdown 总结（一段概述 + 3-5 条要点） |
-| `risks` | array | LLM 识别的风险清单；解析失败 / mock 模式下为 `[]` |
+| `pr` | `{ id, owner, repo, pr, url, head_sha, title }` | 首帧，GitHub 拉取成功后立刻发，让前端先渲头部 |
+| `summary_delta` | `{ "delta": "增量文本" }` | summary 阶段一帧 markdown 输出，多帧拼接成完整 markdown |
+| `risks_done` | `[{ file, line?, severity, category, confidence, reason }]` | risks 阶段完成（要么有 risks 要么空数组） |
+| `error` | `{ "stage": "summary\|risks", "message": "..." }` | 某 stage 中途失败；不中止整条流 |
+| `done` | `{}` | 所有 stage 完成，连接即将关闭 |
 
 **risks 项字段**：
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | `file` | string | 文件路径 |
-| `line` | int | 行号（可选；不确定时响应中省略） |
+| `line` | int | 行号（可选；不确定时省略） |
 | `severity` | string | `high` / `medium` / `low` |
 | `category` | string | `bug` / `security` / `perf` / `style` / `other` |
 | `confidence` | float | 0-1，LLM 自评把握度；前端 ≥ 0.9 默认展开 |
 | `reason` | string | 中文说明，≤ 80 字 |
 
-**错误**
+### 预检错误（不发 SSE）
 
 | Status | 触发条件 | 响应体 |
 |---|---|---|
 | 400 | 请求 body 非合法 JSON | `{"error":"invalid request body"}` |
 | 400 | `url` 字段为空 | `{"error":"url is required"}` |
 | 400 | `url` 不是合法 GitHub PR 链接 | `{"error":"invalid GitHub PR URL"}` |
-| 500 | 总结阶段失败（模板 / Stream 同步错 / 流中错） | `{"error":"summary failed","detail":"..."}` |
 | 502 | GitHub API 调用失败（网络、404、速率限制） | `{"error":"fetch upstream failed","detail":"..."}` |
-
-**注意**：风险识别阶段失败**不致命** —— 服务器记 warn 日志后照常返 200，`risks` 字段为空数组。这是为了让 mock 模式（无法产 JSON）能演示总结输出。生产部署应监控 warn 日志检测 risks 频繁失败。
 
 ### 性能与限制
 
 - 单 PR 文件上限 **100**（一页拉到上限，超出由 prctx 层裁剪后续 PR 处理）
-- 同步返回 = 等 LLM 全部生成完才响应。典型耗时 10-25s（取决于 PR 大小 / 模型）。SSE 升级后首字节 < 3s
-- 默认 `LLM_PROVIDER=mock` 不调真实 LLM，无 key 也能跑（演示用）
+- **首字节延迟 < 200ms**（`pr` 元信息帧立刻发），summary 一字一字流出，UX 远好于同步等 25s
+- 默认 `LLM_PROVIDER=mock` 不调真实 LLM，无 key 也能跑（演示用，risks 阶段会发 `error` event）
 
-### 示例
+### 客户端示例
+
+**curl**（看原始 SSE 输出）：
 
 ```bash
-curl -X POST http://localhost:8080/api/review \
+curl -N -X POST http://localhost:8080/api/review \
   -H 'Content-Type: application/json' \
   -d '{"url":"https://github.com/golang/go/pull/12345"}'
 ```
+
+`-N` 关掉 curl 的输出缓冲，让帧实时显示。
+
+**JavaScript fetch + ReadableStream**（`EventSource` 只支持 GET，POST + SSE 必须手动解析）：
+
+```javascript
+const res = await fetch("/api/review", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ url }),
+});
+const reader = res.body.getReader();
+const decoder = new TextDecoder();
+let buf = "";
+while (true) {
+  const { done, value } = await reader.read();
+  if (done) break;
+  buf += decoder.decode(value, { stream: true });
+  const frames = buf.split("\n\n");
+  buf = frames.pop();
+  for (const f of frames) {
+    // 解析 event: / data: 行，按 type dispatch
+  }
+}
+```
+
+完整封装见 `frontend/lib/sse.ts` 的 `streamReview`。
 
 ---
 
@@ -106,13 +122,9 @@ curl -X POST http://localhost:8080/api/review \
 
 存活探针。前端 / 监控用来确认后端已起。
 
-### 请求
-
 ```http
 GET /api/health
 ```
-
-### 响应
 
 **成功** `200 OK`
 
@@ -132,7 +144,7 @@ GET /api/health
 GET /api/reviews?limit=20&cursor=<ulid>
 ```
 
-返回最近 `limit` 条 review 摘要（按 created_at desc）。
+返回最近 `limit` 条 review 摘要（按 created_at desc），每项含 risks 严重度计数 `{high, medium, low}`。
 
 ---
 
@@ -148,20 +160,4 @@ GET /api/reviews/abc123def456
 
 返回完整的 `summary` + `risks[]` + `suggestions[]`。
 
-`?live=1` 模式时改走 SSE 推送（等流式升级 PR）。
-
----
-
-## SSE 事件协议（设计中）
-
-将来 `/api/review` 升级到 SSE 后的事件 schema。`Content-Type: text/event-stream`，每条事件按 `event: <type>\ndata: <json>\n\n` 输出。
-
-| event type | data schema | 含义 |
-|---|---|---|
-| `summary_delta` | `{"delta": "增量文本"}` | 总结阶段一帧 markdown 输出 |
-| `risks_done` | `[{"file","line?","severity","category","reason"}]` | 风险识别阶段完成 |
-| `suggestions_done` | `[{"file","line","type","suggestion"}]` | 行内建议阶段完成 |
-| `error` | `{"stage":"summary\|risks\|suggestions","message":"..."}` | 某阶段中途错误 |
-| `done` | `{"stage":"summary\|risks\|suggestions"}` | 某阶段完成 |
-
-前端用原生 `EventSource` 订阅，按 type 路由到对应 UI 区域独立刷新。
+`?live=1` 模式时改走 SSE 推送（与 `POST /api/review` 同一套事件协议）。

@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 
@@ -17,7 +19,8 @@ import (
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/review"
 )
 
-// PostReview 接收 { url } 入参，并行跑 summary + risks 两阶段，返 JSON。
+// PostReview 接收 { url }，先用 JSON 处理预检错误；
+// 成功后切到 text/event-stream，按帧推送各 stage 事件。
 func PostReview(d Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var body struct {
@@ -46,45 +49,14 @@ func PostReview(d Deps) gin.HandlerFunc {
 			return
 		}
 
-		pCtx := buildContext(pr)
+		// SSE 头：必须在首次 Write 之前设
+		c.Header("Content-Type", "text/event-stream")
+		c.Header("Cache-Control", "no-cache")
+		c.Header("Connection", "keep-alive")
+		c.Header("X-Accel-Buffering", "no") // 关掉 nginx / 反代缓冲
 
-		// 两阶段并行；summary 失败 → 500，risks 失败 → 仅 log warn，返空数组
-		var (
-			wg         sync.WaitGroup
-			summary    string
-			summaryErr string
-			risks      []review.Risk
-			risksErr   string
-		)
-		stageCtx, cancel := context.WithCancel(ctx)
-		defer cancel()
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			summary, summaryErr = runSummary(stageCtx, pCtx, d.Provider)
-			if summaryErr != "" {
-				cancel()
-			}
-		}()
-		go func() {
-			defer wg.Done()
-			risks, risksErr = runRisks(stageCtx, pCtx, d.Provider)
-		}()
-		wg.Wait()
-
-		if summaryErr != "" {
-			slog.Error("summary stage", "err", summaryErr)
-			c.JSON(500, gin.H{"error": "summary failed", "detail": summaryErr})
-			return
-		}
-		if risksErr != "" {
-			slog.Warn("risks stage failed; returning empty risks", "err", risksErr)
-		}
-		if risks == nil {
-			risks = []review.Risk{} // 保证 JSON 输出 [] 而非 null
-		}
-
-		c.JSON(200, gin.H{
+		// 首帧：PR meta —— 让前端立刻拿到 head_sha / title 显示在头部
+		writeSSE(c.Writer, "pr", map[string]any{
 			"id":       pr.HeadSHA,
 			"owner":    pr.Owner,
 			"repo":     pr.Repo,
@@ -92,57 +64,87 @@ func PostReview(d Deps) gin.HandlerFunc {
 			"url":      url,
 			"head_sha": pr.HeadSHA,
 			"title":    pr.Title,
-			"summary":  summary,
-			"risks":    risks,
+		})
+		c.Writer.Flush()
+
+		pCtx := buildContext(pr)
+		merged := mergeStages(ctx, pCtx, d.Provider)
+
+		c.Stream(func(w io.Writer) bool {
+			select {
+			case <-ctx.Done():
+				return false
+			case ev, ok := <-merged:
+				if !ok {
+					writeSSERaw(w, "done", json.RawMessage(`{}`))
+					return false
+				}
+				writeSSERaw(w, ev.Type, ev.Data)
+				return true
+			}
 		})
 	}
 }
 
-// runSummary SummaryStage，把所有 delta 拼成 markdown 文本
-func runSummary(ctx context.Context, c prctx.Context, p llm.Provider) (text, errMsg string) {
-	events, err := (review.SummaryStage{}).Run(ctx, c, p)
-	if err != nil {
-		return "", err.Error()
+// mergeStages 并发跑 summary + risks，把各自的事件归并到一个 channel。
+// 任一 stage 失败会发一帧 error event 而非中止整条流。
+func mergeStages(ctx context.Context, c prctx.Context, p llm.Provider) <-chan review.Event {
+	merged := make(chan review.Event, 16)
+	var wg sync.WaitGroup
+
+	stages := []review.Stage{
+		review.SummaryStage{},
+		review.RisksStage{},
 	}
-	var buf strings.Builder
-	for ev := range events {
-		switch ev.Type {
-		case "summary_delta":
-			var pl struct {
-				Delta string `json:"delta"`
-			}
-			_ = json.Unmarshal(ev.Data, &pl)
-			buf.WriteString(pl.Delta)
-		case "error":
-			var pl struct {
-				Message string `json:"message"`
-			}
-			_ = json.Unmarshal(ev.Data, &pl)
-			errMsg = pl.Message
-		}
+	wg.Add(len(stages))
+	for _, s := range stages {
+		go forwardStage(ctx, c, p, s, merged, &wg)
 	}
-	return buf.String(), errMsg
+
+	go func() {
+		wg.Wait()
+		close(merged)
+	}()
+	return merged
 }
 
-// runRisks RisksStage，把 risks_done 事件 unmarshal 成 []Risk
-func runRisks(ctx context.Context, c prctx.Context, p llm.Provider) (risks []review.Risk, errMsg string) {
-	events, err := (review.RisksStage{}).Run(ctx, c, p)
+// forwardStage 跑一个 stage，把它的事件转发到 merged；ctx 取消时安全退出。
+// stage 同步失败时发一帧 error 让前端能感知，而非默默丢失。
+func forwardStage(ctx context.Context, c prctx.Context, p llm.Provider, s review.Stage, merged chan<- review.Event, wg *sync.WaitGroup) {
+	defer wg.Done()
+	events, err := s.Run(ctx, c, p)
 	if err != nil {
-		return nil, err.Error()
+		payload, _ := json.Marshal(map[string]string{"stage": s.Name(), "message": err.Error()})
+		select {
+		case <-ctx.Done():
+		case merged <- review.Event{Type: "error", Data: payload}:
+		}
+		return
 	}
 	for ev := range events {
-		switch ev.Type {
-		case "risks_done":
-			_ = json.Unmarshal(ev.Data, &risks)
-		case "error":
-			var pl struct {
-				Message string `json:"message"`
-			}
-			_ = json.Unmarshal(ev.Data, &pl)
-			errMsg = pl.Message
+		if ev.Type == "done" {
+			continue // per-stage done is suppressed; PostReview emits a single terminal done
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case merged <- ev:
 		}
 	}
-	return risks, errMsg
+}
+
+// writeSSE 在 c.Stream 外部写一帧（首帧 pr meta 用）；调用方负责 Flush。
+func writeSSE(w http.ResponseWriter, eventType string, data any) {
+	raw, _ := json.Marshal(data)
+	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, raw)
+}
+
+// writeSSERaw c.Stream 内部用；payload 已是 json.RawMessage，避免双次 Marshal。
+// c.Stream 在 step 返回后自动 Flush。
+// Invariant: data must be single-line JSON (no literal newlines); do not pretty-print,
+// as embedded newlines would break SSE framing (each data: line must be a complete field).
+func writeSSERaw(w io.Writer, eventType string, data json.RawMessage) {
+	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, data)
 }
 
 // buildContext 把 PullRequest 拍平成最简 prctx.Context（仅 L1 + L2 patch）。
