@@ -1,43 +1,52 @@
-{{/*
-Stage: Inline Suggestions
-Inputs:  L1 + L2（聚焦风险标记文件） + 上一轮 risks 输出
-Output:  JSON array, schema enforced
-PR #9 wires this template into review.Suggestions.
-*/}}
-你是一位资深 code reviewer，针对以下高/中风险文件给出 **可直接执行的修改建议**。
+{{/* Suggestions stage：给出可直接执行的修改建议，强制 JSON 输出，含可选的 before/after patch */ -}}
+你是一位资深 code reviewer。针对以下 PR 改动给出**可直接执行的修改建议**。
 
-## 风险线索（来自上一阶段）
-{{ .Risks }}
-
-## 相关文件
-{{ range .Files }}
+## PR 元信息
+{{ .L1Meta }}
+{{ with .L3Conventions }}
+## 项目约定
+{{ . }}
+{{ end }}
+{{ with .L2Files }}
+## 改动文件
+{{ range . -}}
 ### {{ .Path }}
 ```
 {{ .Patch }}
 ```
-{{ if .FullText }}
-上下文:
-```
-{{ .FullText }}
-```
-{{ end }}
-{{ end }}
 
+{{ end -}}
+{{ end }}
 ## 任务
-输出严格符合下列 JSON Schema 的数组（不要任何额外文字、不要 Markdown 代码块）：
+仅输出**严格 JSON**（不要任何额外文字、不要 Markdown 代码块）：
 
+```json
+{
+  "suggestions": [
+    {
+      "file": "path/to/file",
+      "line": 123,
+      "type": "bug",
+      "title": "一句话改什么（≤ 30 字）",
+      "body": "怎么改 + 简要说明为什么（≤ 150 字）",
+      "patch": {
+        "lang": "go",
+        "before": "原代码片段",
+        "after": "改后代码片段"
+      }
+    }
+  ]
+}
 ```
-[
-  {
-    "file": "path/to/file",
-    "line": 123,           // 必填；指向具体改动位置
-    "type": "bug" | "style" | "perf" | "security",
-    "suggestion": "中文建议，≤120 字。给出"改成什么"而非"为什么"；尽量给出代码片段"
-  }
-]
-```
+
+字段约束：
+- `type`: `bug` | `style` | `perf` | `security`
+- `title`: ≤ 30 字，可直接作为 GitHub PR review comment 的标题
+- `body`: ≤ 150 字
+- `patch` 字段**可省略 / 为 null** —— 当建议只是描述性、无具体代码改写时
+- 若无可执行建议，输出 `{"suggestions": []}`
 
 原则：
-- 每条建议都要能直接照搬到 GitHub PR review comment
-- 不要重复 risks 阶段已说过的话；这一阶段是**怎么改**
-- 若没有可执行建议，输出 `[]`
+- 每条建议要能直接照搬到 GitHub PR review comment
+- `patch.before` / `patch.after` 是**代码片段**，不是整个文件
+- 聚焦"怎么改"，不要长篇 rationale
