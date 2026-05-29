@@ -70,7 +70,14 @@ func fetchFileContent(ctx context.Context, client *gh.Client, owner, repo, path 
 		return "", err
 	}
 	if len(content) > maxConventionFileSize {
-		content = content[:maxConventionFileSize] + "\n...[truncated]"
+		cut := 0
+		for i := range content {
+			if i > maxConventionFileSize {
+				break
+			}
+			cut = i
+		}
+		content = content[:cut] + "\n...[truncated]"
 	}
 	return content, nil
 }
