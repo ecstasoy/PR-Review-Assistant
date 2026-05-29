@@ -5,8 +5,9 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { streamReview, type PrMeta } from "@/lib/sse";
-import type { Risk } from "@/lib/types";
+import type { Risk, Suggestion } from "@/lib/types";
 import { RiskList } from "./RiskList";
+import { SuggestionList } from "./SuggestionList";
 
 export function ReviewForm() {
   const [url, setUrl] = useState("");
@@ -15,6 +16,7 @@ export function ReviewForm() {
   const [pr, setPr] = useState<PrMeta | null>(null);
   const [summary, setSummary] = useState("");
   const [risks, setRisks] = useState<Risk[]>([]);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -22,12 +24,14 @@ export function ReviewForm() {
     setPr(null);
     setSummary("");
     setRisks([]);
+    setSuggestions([]);
     setStreaming(true);
     try {
       await streamReview(url, {
         onPr: setPr,
         onSummaryDelta: (delta) => setSummary((s) => s + delta),
         onRisksDone: setRisks,
+        onSuggestionsDone: setSuggestions,
         onStageError: (stage, msg) => setError(`${stage}: ${msg}`),
       });
     } catch (err) {
@@ -65,7 +69,13 @@ export function ReviewForm() {
       </form>
 
       {pr || streaming ? (
-        <ResultCard pr={pr} summary={summary} risks={risks} streaming={streaming} />
+        <ResultCard
+          pr={pr}
+          summary={summary}
+          risks={risks}
+          suggestions={suggestions}
+          streaming={streaming}
+        />
       ) : null}
     </div>
   );
@@ -75,10 +85,11 @@ interface ResultCardProps {
   pr: PrMeta | null;
   summary: string;
   risks: Risk[];
+  suggestions: Suggestion[];
   streaming: boolean;
 }
 
-function ResultCard({ pr, summary, risks, streaming }: ResultCardProps) {
+function ResultCard({ pr, summary, risks, suggestions, streaming }: ResultCardProps) {
   return (
     <article className="rounded-lg border border-zinc-200 p-5 dark:border-zinc-800">
       <header className="mb-3 border-b border-zinc-200 pb-2 dark:border-zinc-800">
@@ -112,6 +123,12 @@ function ResultCard({ pr, summary, risks, streaming }: ResultCardProps) {
       {risks.length > 0 ? (
         <div className="mt-5 border-t border-zinc-200 pt-4 dark:border-zinc-800">
           <RiskList risks={risks} />
+        </div>
+      ) : null}
+
+      {suggestions.length > 0 ? (
+        <div className="mt-5 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+          <SuggestionList suggestions={suggestions} />
         </div>
       ) : null}
     </article>
