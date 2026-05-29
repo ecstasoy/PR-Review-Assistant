@@ -67,7 +67,16 @@ func PostReview(d Deps) gin.HandlerFunc {
 		})
 		c.Writer.Flush()
 
-		pCtx := buildContext(pr)
+		pCtx, err := d.Builder.Build(pr)
+		if err != nil {
+			slog.Error("build prompt context", "err", err)
+			writeSSE(c.Writer, "error", map[string]string{"stage": "context", "message": err.Error()})
+			writeSSE(c.Writer, "done", map[string]any{})
+			return
+		}
+		if len(pCtx.BudgetReport.Dropped) > 0 {
+			slog.Warn("prctx dropped large files", "files", pCtx.BudgetReport.Dropped, "limit", pCtx.BudgetReport.TokenLimit)
+		}
 		merged := mergeStages(ctx, pCtx, d.Provider)
 
 		c.Stream(func(w io.Writer) bool {
@@ -147,27 +156,3 @@ func writeSSERaw(w io.Writer, eventType string, data json.RawMessage) {
 	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, data)
 }
 
-// buildContext 把 PullRequest 拍平成最简 prctx.Context（仅 L1 + L2 patch）。
-// 真正的多层裁剪 + L3 注入由后续 PR 在 prctx.Builder 实现。
-func buildContext(pr gh.PullRequest) prctx.Context {
-	var l1 strings.Builder
-	fmt.Fprintf(&l1, "仓库: %s/%s#%d\n", pr.Owner, pr.Repo, pr.Number)
-	fmt.Fprintf(&l1, "标题: %s\n", pr.Title)
-	if pr.Body != "" {
-		fmt.Fprintf(&l1, "正文:\n%s\n", pr.Body)
-	}
-	fmt.Fprintf(&l1, "改动 %d 个文件\n", len(pr.Files))
-
-	files := make([]prctx.FileContext, 0, len(pr.Files))
-	for _, f := range pr.Files {
-		files = append(files, prctx.FileContext{
-			Path:  f.Path,
-			Patch: f.Patch,
-		})
-	}
-
-	return prctx.Context{
-		L1Meta:  l1.String(),
-		L2Files: files,
-	}
-}

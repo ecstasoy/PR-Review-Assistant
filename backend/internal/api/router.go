@@ -6,6 +6,7 @@ import (
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/api/middleware"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/github"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/llm"
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/prctx"
 )
 
 // Deps 是路由 + handler 需要的所有依赖。
@@ -13,6 +14,7 @@ import (
 type Deps struct {
 	Fetcher  github.Fetcher
 	Provider llm.Provider
+	Builder  prctx.Builder
 }
 
 // Register 挂载 /api 路由组。

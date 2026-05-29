@@ -15,6 +15,7 @@ import (
 
 	gh "github.com/ecstasoy/PR-Review-Assistant/backend/internal/github"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/llm"
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/prctx"
 )
 
 // fakeFetcher 让测试注入预设的 PR 数据或错误。
@@ -28,8 +29,12 @@ func (f fakeFetcher) Fetch(_ context.Context, _ string) (gh.PullRequest, error) 
 }
 
 // startTestServer 起一个真实 httptest server；gin.c.Stream 在 ResponseRecorder 下会因 CloseNotify panic。
+// 自动补默认 Builder，免每个测试都填。
 func startTestServer(t *testing.T, deps Deps) *httptest.Server {
 	t.Helper()
+	if deps.Builder == nil {
+		deps.Builder = prctx.NewLayeredBuilder()
+	}
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	Register(r, deps)
