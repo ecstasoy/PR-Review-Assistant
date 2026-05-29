@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -305,6 +306,24 @@ func samplePR() gh.PullRequest {
 	}
 }
 
+// samplePRWithMeta 在 samplePR 基础上填齐 A1+A2 引入的所有 PR meta 字段，供透字段测试用。
+func samplePRWithMeta() gh.PullRequest {
+	p := samplePR()
+	p.Author = "lin-mei"
+	p.State = gh.StateOpen
+	p.Labels = []string{"bug", "needs-review"}
+	p.BaseRef = "main"
+	p.HeadRef = "fix/scanner-race"
+	p.CreatedAt = time.Date(2026, 5, 28, 10, 0, 0, 0, time.UTC)
+	p.Stats = gh.Stats{Files: 5, Additions: 96, Deletions: 41, Commits: 4, Comments: 7}
+	p.CI = gh.CIStatusPassing
+	p.Checks = []gh.Check{
+		{Name: "build", Status: gh.CIStatusPassing, DurationMS: 24100},
+		{Name: "test", Status: gh.CIStatusPassing, DurationMS: 61300},
+	}
+	return p
+}
+
 func TestPostReview_CacheMiss_PersistsResult(t *testing.T) {
 	s := newTestStore(t)
 	prov := &countingProvider{inner: dualMockProvider{
@@ -505,5 +524,101 @@ func TestPostReview_AccessDenied(t *testing.T) {
 	res, body := postJSON(t, srv, "/api/review", map[string]string{"url": "https://github.com/o/r/pull/1"})
 	if res.StatusCode != 403 {
 		t.Errorf("status=%d, want 403; body=%s", res.StatusCode, body)
+	}
+}
+
+func TestPostReview_PrEvent_IncludesMeta(t *testing.T) {
+	mock := llm.NewMockProvider()
+	mock.Reply = "summary"
+	srv := startTestServer(t, Deps{Fetcher: fakeFetcher{pr: samplePRWithMeta()}, Provider: mock})
+
+	res, body := postJSON(t, srv, "/api/review", map[string]string{"url": "https://github.com/golang/go/pull/42"})
+	if res.StatusCode != 200 {
+		t.Fatalf("status=%d body=%s", res.StatusCode, body)
+	}
+	frames := parseSSE(body)
+	if len(frames) == 0 || frames[0].Type != "pr" {
+		t.Fatalf("首帧应是 pr，得到 %+v", frames)
+	}
+	var meta map[string]any
+	if err := json.Unmarshal([]byte(frames[0].Data), &meta); err != nil {
+		t.Fatalf("decode pr data: %v", err)
+	}
+
+	if meta["author"] != "lin-mei" {
+		t.Errorf("author=%v want lin-mei", meta["author"])
+	}
+	if meta["state"] != "open" {
+		t.Errorf("state=%v want open", meta["state"])
+	}
+	if meta["base_ref"] != "main" || meta["head_ref"] != "fix/scanner-race" {
+		t.Errorf("refs 错: base=%v head=%v", meta["base_ref"], meta["head_ref"])
+	}
+	if meta["ci"] != "passing" {
+		t.Errorf("ci=%v want passing", meta["ci"])
+	}
+	labels, _ := meta["labels"].([]any)
+	if len(labels) != 2 || labels[0] != "bug" {
+		t.Errorf("labels=%v", labels)
+	}
+	stats, _ := meta["stats"].(map[string]any)
+	if stats == nil || stats["files"] != float64(5) || stats["additions"] != float64(96) {
+		t.Errorf("stats=%v", stats)
+	}
+	checks, _ := meta["checks"].([]any)
+	if len(checks) != 2 {
+		t.Errorf("checks 应为 2，得到 %v", checks)
+	} else {
+		c0, _ := checks[0].(map[string]any)
+		if c0["name"] != "build" || c0["status"] != "passing" || c0["duration_ms"] != float64(24100) {
+			t.Errorf("checks[0]=%v", c0)
+		}
+	}
+	if _, ok := meta["pr_created_at"]; !ok {
+		t.Error("缺 pr_created_at")
+	}
+}
+
+func TestPostReview_CacheMiss_PersistsAllMetaFields(t *testing.T) {
+	s := newTestStore(t)
+	srv := startTestServer(t, Deps{
+		Fetcher: fakeFetcher{pr: samplePRWithMeta()},
+		Provider: dualMockProvider{
+			textReply: "summary text",
+			jsonReply: `{"risks":[],"suggestions":[]}`,
+		},
+		Store: s,
+	})
+
+	res, body := postJSON(t, srv, "/api/review", map[string]string{"url": "https://github.com/golang/go/pull/42"})
+	if res.StatusCode != 200 {
+		t.Fatalf("status=%d body=%s", res.StatusCode, body)
+	}
+
+	rec, err := s.Get(context.Background(), "golang", "go", 42, "deadbeef")
+	if err != nil {
+		t.Fatalf("store.Get: %v", err)
+	}
+	if rec == nil {
+		t.Fatal("缓存应被写入")
+	}
+	var p cachedPayload
+	if err := json.Unmarshal(rec.Payload, &p); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if p.Author != "lin-mei" || p.State != "open" || p.CI != "passing" {
+		t.Errorf("meta 未持久化: %+v", p)
+	}
+	if p.BaseRef != "main" || p.HeadRef != "fix/scanner-race" {
+		t.Errorf("refs 未持久化: %+v", p)
+	}
+	if p.Stats.Files != 5 || p.Stats.Additions != 96 {
+		t.Errorf("stats 未持久化: %+v", p.Stats)
+	}
+	if len(p.Labels) != 2 || len(p.Checks) != 2 {
+		t.Errorf("labels/checks 未持久化: %+v %+v", p.Labels, p.Checks)
+	}
+	if p.PRCreatedAt.IsZero() {
+		t.Error("pr_created_at 应被持久化")
 	}
 }

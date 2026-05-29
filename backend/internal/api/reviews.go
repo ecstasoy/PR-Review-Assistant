@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	gh "github.com/ecstasoy/PR-Review-Assistant/backend/internal/github"
 )
 
 const (
@@ -15,23 +17,68 @@ const (
 	maxListLimit     = 100
 )
 
-// reviewListItem /api/reviews 列表项；只含 meta，不带 payload。
-type reviewListItem struct {
-	ID        string `json:"id"`
-	Owner     string `json:"owner"`
-	Repo      string `json:"repo"`
-	PR        int    `json:"pr"`
-	HeadSHA   string `json:"head_sha"`
-	Title     string `json:"title,omitempty"`
-	CreatedAt string `json:"created_at"`
+// riskCounts 按 severity 统计的风险数；落地"最近评审"卡 + 历史表格的红 / 黄 / 灰 pips 用。
+type riskCounts struct {
+	High   int `json:"high"`
+	Medium int `json:"medium"`
+	Low    int `json:"low"`
 }
 
-// reviewDetail /api/reviews/:id 详情；inline 缓存 payload 的字段。
+// reviewListItem /api/reviews 列表项；只含 meta + CI + risks 计数，不带完整 payload。
+// 给落地"最近评审"卡 + /history 密集表格用，所以体积最小化。
+type reviewListItem struct {
+	ID         string     `json:"id"`
+	Owner      string     `json:"owner"`
+	Repo       string     `json:"repo"`
+	PR         int        `json:"pr"`
+	HeadSHA    string     `json:"head_sha"`
+	Title      string     `json:"title,omitempty"`
+	CreatedAt  string     `json:"created_at"`
+	CI         string     `json:"ci,omitempty"`
+	RiskCounts riskCounts `json:"risk_counts"`
+}
+
+// reviewDetail /api/reviews/:id 详情；完整透出 cachedPayload，
+// 给评审页顶栏 + 三视图渲染（review 页缓存秒回路径不再需要回 GitHub 拉 meta）。
 type reviewDetail struct {
 	reviewListItem
+	Author      string          `json:"author,omitempty"`
+	State       string          `json:"state,omitempty"`
+	Labels      []string        `json:"labels,omitempty"`
+	BaseRef     string          `json:"base_ref,omitempty"`
+	HeadRef     string          `json:"head_ref,omitempty"`
+	PRCreatedAt time.Time       `json:"pr_created_at,omitzero"`
+	Stats       gh.Stats        `json:"stats,omitzero"`
+	Checks      []gh.Check      `json:"checks,omitempty"`
 	Summary     string          `json:"summary"`
 	Risks       json.RawMessage `json:"risks,omitempty"`
 	Suggestions json.RawMessage `json:"suggestions,omitempty"`
+}
+
+// countRisksBySeverity 解析 risks_done event raw JSON，按 severity 分组计数。
+// 解析失败返零值（容错于格式异常的旧缓存）。
+func countRisksBySeverity(raw json.RawMessage) riskCounts {
+	if len(raw) == 0 {
+		return riskCounts{}
+	}
+	var items []struct {
+		Severity string `json:"severity"`
+	}
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return riskCounts{}
+	}
+	var c riskCounts
+	for _, it := range items {
+		switch it.Severity {
+		case "high":
+			c.High++
+		case "medium":
+			c.Medium++
+		case "low":
+			c.Low++
+		}
+	}
+	return c
 }
 
 // ListReviews GET /api/reviews?limit=N — 历史评审列表，按 created_at DESC。
@@ -59,10 +106,12 @@ func ListReviews(d Deps) gin.HandlerFunc {
 				HeadSHA:   r.HeadSHA,
 				CreatedAt: r.CreatedAt.UTC().Format(time.RFC3339),
 			}
-			// title 在 payload 里；解析失败不影响主路径（旧缓存可能没有该字段）
+			// title / ci / risks 计数从 payload 解出；解析失败保留零值（旧缓存兼容）
 			var p cachedPayload
 			if jerr := json.Unmarshal(r.Payload, &p); jerr == nil {
 				it.Title = p.Title
+				it.CI = p.CI
+				it.RiskCounts = countRisksBySeverity(p.Risks)
 			}
 			out = append(out, it)
 		}
@@ -96,14 +145,24 @@ func GetReview(d Deps) gin.HandlerFunc {
 		}
 		c.JSON(http.StatusOK, reviewDetail{
 			reviewListItem: reviewListItem{
-				ID:        rec.ID,
-				Owner:     rec.Owner,
-				Repo:      rec.Repo,
-				PR:        rec.PRNumber,
-				HeadSHA:   rec.HeadSHA,
-				Title:     p.Title,
-				CreatedAt: rec.CreatedAt.UTC().Format(time.RFC3339),
+				ID:         rec.ID,
+				Owner:      rec.Owner,
+				Repo:       rec.Repo,
+				PR:         rec.PRNumber,
+				HeadSHA:    rec.HeadSHA,
+				Title:      p.Title,
+				CreatedAt:  rec.CreatedAt.UTC().Format(time.RFC3339),
+				CI:         p.CI,
+				RiskCounts: countRisksBySeverity(p.Risks),
 			},
+			Author:      p.Author,
+			State:       p.State,
+			Labels:      p.Labels,
+			BaseRef:     p.BaseRef,
+			HeadRef:     p.HeadRef,
+			PRCreatedAt: p.PRCreatedAt,
+			Stats:       p.Stats,
+			Checks:      p.Checks,
 			Summary:     p.Summary,
 			Risks:       p.Risks,
 			Suggestions: p.Suggestions,
