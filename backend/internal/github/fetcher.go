@@ -13,6 +13,21 @@ const (
 	StateMerged = "merged"
 )
 
+// CI 综合状态常量；汇总单个 head commit 的所有 check-run。
+// 优先级：任一失败 → failing；否则任一未完成 → pending；全部成功 → passing；无 check → pending。
+const (
+	CIStatusPassing = "passing"
+	CIStatusFailing = "failing"
+	CIStatusPending = "pending"
+)
+
+// Check 单个 CI 检查项（GitHub Actions / 第三方 CI 暴露的 check-run）。
+type Check struct {
+	Name       string // 检查名（如 "build" / "test (race)" / "lint (golangci)"）
+	Status     string // passing / failing / pending（与 CI 同枚举）
+	DurationMS int    // CompletedAt - StartedAt 毫秒；未完成时 0
+}
+
 // Stats PR 体量统计（来自 GitHub API 的 pulls.Get 响应，无需额外请求）。
 type Stats struct {
 	Files     int // changed_files
@@ -39,6 +54,10 @@ type PullRequest struct {
 	HeadRef   string    // head 分支名（如 "fix/shard-eviction-race"）
 	CreatedAt time.Time // PR 创建时间，UTC
 	Stats     Stats
+
+	// CI 状态：HeadSHA 上所有 check-run 的汇总；checks 失败 / pending / 抓取失败均不阻塞主流程。
+	CI     string // passing / failing / pending
+	Checks []Check
 
 	Files       []File
 	Conventions Conventions
