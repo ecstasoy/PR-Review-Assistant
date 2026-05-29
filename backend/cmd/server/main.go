@@ -43,18 +43,30 @@ func main() {
 	}
 }
 
-// buildDeps 按配置选 Provider；LLM_PROVIDER=openai 且有 key 才用真实，否则 mock。
+// buildDeps 按配置选 Provider；明示用户意图与最终走向，缺 key 显式 warn 而非静默降级。
 func buildDeps(cfg config.Config) api.Deps {
-	var provider llm.Provider
-	if cfg.LLMProvider == "openai" && cfg.OpenAIAPIKey != "" {
-		provider = llm.NewOpenAIProvider(cfg.OpenAIBaseURL, cfg.OpenAIAPIKey, cfg.LLMModel)
-		slog.Info("llm provider", "type", "openai", "base", cfg.OpenAIBaseURL, "model", cfg.LLMModel)
-	} else {
-		provider = llm.NewMockProvider()
-		slog.Info("llm provider", "type", "mock")
-	}
+	provider := pickProvider(cfg)
 	return api.Deps{
 		Fetcher:  gh.NewRealFetcher(cfg.GithubToken),
 		Provider: provider,
+	}
+}
+
+func pickProvider(cfg config.Config) llm.Provider {
+	switch cfg.LLMProvider {
+	case "openai":
+		if cfg.OpenAIAPIKey == "" {
+			slog.Warn("LLM_PROVIDER=openai 但 OPENAI_API_KEY 未设，降级到 mock；请检查 .env 或 shell 环境变量")
+			slog.Info("llm provider", "type", "mock", "reason", "missing key")
+			return llm.NewMockProvider()
+		}
+		slog.Info("llm provider", "type", "openai", "base", cfg.OpenAIBaseURL, "model", cfg.LLMModel)
+		return llm.NewOpenAIProvider(cfg.OpenAIBaseURL, cfg.OpenAIAPIKey, cfg.LLMModel)
+	case "mock", "":
+		slog.Info("llm provider", "type", "mock")
+		return llm.NewMockProvider()
+	default:
+		slog.Warn("未知 LLM_PROVIDER 值，降级到 mock", "value", cfg.LLMProvider)
+		return llm.NewMockProvider()
 	}
 }
