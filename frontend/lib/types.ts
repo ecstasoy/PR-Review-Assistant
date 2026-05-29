@@ -1,5 +1,5 @@
-// 前端组件与后端 API 共享的类型
-// 与 backend/internal/review 和 backend/internal/store 保持同步
+// 前端与后端共享的类型
+// 字段命名与后端 JSON 一致（snake_case），避免转换
 
 export interface Risk {
   file: string;
@@ -20,12 +20,13 @@ export interface ReviewResult {
   id: string;
   owner: string;
   repo: string;
-  prNumber: number;
-  headSHA: string;
+  pr: number;
+  url: string;
+  head_sha: string;
+  title: string;
   summary: string;
-  risks: Risk[];
-  suggestions: Suggestion[];
-  createdAt: string;
+  risks?: Risk[];          // 后续 PR 填
+  suggestions?: Suggestion[]; // 后续 PR 填
 }
 
 export type EventType =
