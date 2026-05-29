@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 
 import "./globals.css";
 import { NavBar } from "@/components/NavBar";
+import { ThemeScript } from "@/components/theme-script";
 
 // next/font 注入 CSS 变量；globals.css 的 --font-sans / --font-mono 引用这两个
 const geistSans = Geist({
@@ -24,8 +25,12 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    // 默认 light；后续主题切换 commit 加 no-flash inline script 在 SSR 时按 localStorage 设置
-    <html lang="zh-CN" data-theme="light" data-density="comfortable">
+    // data-theme 由 ThemeScript 在水合前按 localStorage / prefers-color-scheme 写入，
+    // 这里给 light 兜底（SSR 输出 + 极端情况下脚本被禁）
+    <html lang="zh-CN" data-theme="light" data-density="comfortable" suppressHydrationWarning>
+      <head>
+        <ThemeScript />
+      </head>
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
         <NavBar />
         <main className="mx-auto max-w-5xl px-6 py-8">{children}</main>
