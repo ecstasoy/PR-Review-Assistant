@@ -155,13 +155,24 @@ func allocateL2(files []github.File, budget int) ([]FileContext, int, []string) 
 
 // estimateTokens 粗略估 token 数（不引 tiktoken 等真实分词器，按字符数 / 3 近似）。
 func estimateTokens(s string) int {
-	return (len(s) + charsPerToken - 1) / charsPerToken
+	chars := 0
+	for range s {
+		chars++
+	}
+	return (chars + charsPerToken - 1) / charsPerToken
 }
 
 // truncate 截断字符串到指定字符数，末尾加省略标记。
 func truncate(s string, maxChars int) string {
-	if len(s) <= maxChars {
-		return s
+	if maxChars <= 0 {
+		return "\n...[truncated]"
 	}
-	return s[:maxChars] + "\n...[truncated]"
+	chars := 0
+	for i := range s {
+		if chars == maxChars {
+			return s[:i] + "\n...[truncated]"
+		}
+		chars++
+	}
+	return s
 }
