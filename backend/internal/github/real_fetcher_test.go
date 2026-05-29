@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 // stubServer 起一个 httptest server，go-github 客户端 BaseURL 指向这里
@@ -26,9 +27,20 @@ func TestRealFetcher_Fetch_Success(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/repos/golang/go/pulls/42", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"title": "fix panic in scanner",
-			"body":  "fixes #999",
-			"head":  map[string]any{"sha": "deadbeef0000"},
+			"title":         "fix panic in scanner",
+			"body":          "fixes #999",
+			"state":         "open",
+			"merged":        false,
+			"user":          map[string]any{"login": "lin-mei"},
+			"labels":        []map[string]any{{"name": "bug"}, {"name": "needs-review"}},
+			"base":          map[string]any{"ref": "main"},
+			"head":          map[string]any{"sha": "deadbeef0000", "ref": "fix/scanner-panic"},
+			"created_at":    "2026-05-28T10:00:00Z",
+			"changed_files": 5,
+			"additions":     96,
+			"deletions":     41,
+			"commits":       4,
+			"comments":      7,
 		})
 	})
 	mux.HandleFunc("/repos/golang/go/pulls/42/files", func(w http.ResponseWriter, r *http.Request) {
@@ -81,6 +93,80 @@ func TestRealFetcher_Fetch_Success(t *testing.T) {
 	}
 	if got.Files[1].Path != "README.md" {
 		t.Errorf("Files[1] 错: %+v", got.Files[1])
+	}
+
+	// 新增 meta 字段
+	if got.Author != "lin-mei" {
+		t.Errorf("Author=%q want lin-mei", got.Author)
+	}
+	if got.State != StateOpen {
+		t.Errorf("State=%q want open", got.State)
+	}
+	if len(got.Labels) != 2 || got.Labels[0] != "bug" || got.Labels[1] != "needs-review" {
+		t.Errorf("Labels=%v want [bug needs-review]", got.Labels)
+	}
+	if got.BaseRef != "main" {
+		t.Errorf("BaseRef=%q want main", got.BaseRef)
+	}
+	if got.HeadRef != "fix/scanner-panic" {
+		t.Errorf("HeadRef=%q want fix/scanner-panic", got.HeadRef)
+	}
+	wantTime, _ := time.Parse(time.RFC3339, "2026-05-28T10:00:00Z")
+	if !got.CreatedAt.Equal(wantTime) {
+		t.Errorf("CreatedAt=%v want %v", got.CreatedAt, wantTime)
+	}
+	wantStats := Stats{Files: 5, Additions: 96, Deletions: 41, Commits: 4, Comments: 7}
+	if got.Stats != wantStats {
+		t.Errorf("Stats=%+v want %+v", got.Stats, wantStats)
+	}
+}
+
+func TestRealFetcher_Fetch_StateMerged(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/o/r/pulls/1", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"title":  "x",
+			"state":  "closed", // GitHub closed + merged=true → 我们归为 merged
+			"merged": true,
+			"head":   map[string]any{"sha": "0"},
+		})
+	})
+	mux.HandleFunc("/repos/o/r/pulls/1/files", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]any{})
+	})
+	f, cleanup := stubServer(t, mux)
+	defer cleanup()
+	got, err := f.Fetch(context.Background(), "https://github.com/o/r/pull/1")
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if got.State != StateMerged {
+		t.Errorf("merged=true 时 State 应为 merged，得到 %q", got.State)
+	}
+}
+
+func TestRealFetcher_Fetch_EmptyLabels(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/o/r/pulls/1", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"title": "no labels",
+			"head":  map[string]any{"sha": "0"},
+		})
+	})
+	mux.HandleFunc("/repos/o/r/pulls/1/files", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]any{})
+	})
+	f, cleanup := stubServer(t, mux)
+	defer cleanup()
+	got, err := f.Fetch(context.Background(), "https://github.com/o/r/pull/1")
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if got.Labels == nil {
+		t.Error("Labels 应是空 slice 而非 nil，避免下游 nil-check")
+	}
+	if len(got.Labels) != 0 {
+		t.Errorf("Labels 应为空，得到 %v", got.Labels)
 	}
 }
 

@@ -42,13 +42,38 @@ func (f *RealFetcher) Fetch(ctx context.Context, rawURL string) (PullRequest, er
 		return PullRequest{}, fmt.Errorf("list pull request files: %w", classifyGitHubError(err))
 	}
 
+	// state 在 GitHub 是 open/closed 二值，merged 单独用 boolean 标识；
+	// 这里合并为三态 string 让上层不必再判 merged 标志。
+	state := pr.GetState()
+	if pr.GetMerged() {
+		state = StateMerged
+	}
+
+	labels := make([]string, 0, len(pr.Labels))
+	for _, l := range pr.Labels {
+		labels = append(labels, l.GetName())
+	}
+
 	out := PullRequest{
-		Owner:   owner,
-		Repo:    repo,
-		Number:  number,
-		HeadSHA: pr.GetHead().GetSHA(),
-		Title:   pr.GetTitle(),
-		Body:    pr.GetBody(),
+		Owner:     owner,
+		Repo:      repo,
+		Number:    number,
+		HeadSHA:   pr.GetHead().GetSHA(),
+		Title:     pr.GetTitle(),
+		Body:      pr.GetBody(),
+		Author:    pr.GetUser().GetLogin(),
+		State:     state,
+		Labels:    labels,
+		BaseRef:   pr.GetBase().GetRef(),
+		HeadRef:   pr.GetHead().GetRef(),
+		CreatedAt: pr.GetCreatedAt().Time.UTC(),
+		Stats: Stats{
+			Files:     pr.GetChangedFiles(),
+			Additions: pr.GetAdditions(),
+			Deletions: pr.GetDeletions(),
+			Commits:   pr.GetCommits(),
+			Comments:  pr.GetComments(),
+		},
 	}
 	for _, file := range files {
 		out.Files = append(out.Files, File{
