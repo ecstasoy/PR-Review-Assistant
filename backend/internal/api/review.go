@@ -159,6 +159,7 @@ func PostReview(d Deps) gin.HandlerFunc {
 func persistReview(s store.Store, pr gh.PullRequest, summary string, risks, suggestions json.RawMessage) {
 	payload, err := json.Marshal(cachedPayload{
 		Title:       pr.Title,
+		Files:       pr.Files,
 		Summary:     summary,
 		Risks:       risks,
 		Suggestions: suggestions,

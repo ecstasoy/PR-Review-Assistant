@@ -3,14 +3,18 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+
+	gh "github.com/ecstasoy/PR-Review-Assistant/backend/internal/github"
 )
 
 // cachedPayload 缓存的 review 内容。
 // summary 存累加后的全文；risks / suggestions 存 stage 原 event data 字节，
 // 让回放只需"原样写回"即可，避免与 review 包的具体类型耦合。
 // title 在 persist 时从 PR meta 抄过来，供 /history 列表展示。
+// files 用于 detail 端点回放 Diff 视图所需的文件树 + patch，免再回 GitHub。
 type cachedPayload struct {
 	Title       string          `json:"title,omitempty"`
+	Files       []gh.File       `json:"files,omitempty"`
 	Summary     string          `json:"summary"`
 	Risks       json.RawMessage `json:"risks"`
 	Suggestions json.RawMessage `json:"suggestions"`
