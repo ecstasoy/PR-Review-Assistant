@@ -29,7 +29,7 @@ git clone <repo-url> && cd PR-Review-Assistant
 
 # 2. 配置环境变量（可选；不配走 mock 模式）
 cp backend/.env.example backend/.env
-# 编辑 backend/.env 填入 OPENAI_API_KEY / OPENAI_BASE_URL / GITHUB_TOKEN
+# 编辑 backend/.env，至少填 GITHUB_TOKEN；想用真实 LLM 还要填 OPENAI_API_KEY
 
 # 3. 一键启动
 make dev
@@ -37,7 +37,28 @@ make dev
 # 后端: http://localhost:8080
 ```
 
-<!-- TODO(PR #6): 补充 make dev 实现细节、端口可配置说明 -->
+## ⚙️ 环境配置
+
+后端启动时由 `godotenv` 自动从 `.env` 或 `backend/.env` 加载；生产环境直接用 process env，无需 `.env`。
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `PORT` | `8080` | 后端 HTTP 监听端口 |
+| `GITHUB_TOKEN` | _空_ | GitHub PAT；不配走匿名（60 req/h + 无法读私库） |
+| `LLM_PROVIDER` | `mock` | `mock`（无 key 演示）或 `openai`（任意 OpenAI 兼容 endpoint） |
+| `OPENAI_API_KEY` | _空_ | LLM_PROVIDER=openai 时必填；缺失 → 自动降级 mock + WARN 日志 |
+| `OPENAI_BASE_URL` | `https://api.deepseek.com` | DeepSeek / OpenAI / Kimi / 通义 任选 |
+| `LLM_MODEL` | `deepseek-chat` | 与 BASE_URL 匹配的模型名 |
+| `SQLITE_PATH` | `./data/reviews.db` | SQLite 文件路径；父目录不存在自动建 |
+
+**部署环境凭证管理**：
+
+| 平台 | 注入方式 |
+|---|---|
+| Fly.io | `fly secrets set OPENAI_API_KEY=...` |
+| GitHub Actions | Repo Secrets → workflow `env: ... ${{ secrets.X }}` |
+| Docker | `docker run -e OPENAI_API_KEY=...` 或 `--env-file` |
+| Vercel | 项目设置 → 环境变量 |
 
 ## 🧩 架构概览
 

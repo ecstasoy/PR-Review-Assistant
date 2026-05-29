@@ -1,4 +1,4 @@
-// 后端 HTTP 服务入口：装配 slog → 读配置 → 构造依赖 → Gin → 注册路由。
+// 后端 HTTP 服务入口：装配 slog → 加载 .env → 读配置 → 构造依赖 → Gin → 注册路由。
 package main
 
 import (
@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
 
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/api"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/config"
@@ -17,6 +18,16 @@ import (
 func main() {
 	// 全局 JSON 结构化日志
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+
+	// 尝试加载 .env（相对于当前工作目录）；生产环境一般无 .env：文件不存在时忽略，其它错误给出告警
+	for _, p := range []string{".env", "backend/.env"} {
+		if err := godotenv.Load(p); err == nil {
+			slog.Info("loaded env file", "path", p)
+			break
+		} else if !os.IsNotExist(err) {
+			slog.Warn("failed to load env file", "path", p, "err", err)
+		}
+	}
 
 	cfg := config.MustLoad()
 	deps := buildDeps(cfg)
@@ -34,18 +45,30 @@ func main() {
 	}
 }
 
-// buildDeps 按配置选 Provider；LLM_PROVIDER=openai 且有 key 才用真实，否则 mock。
+// buildDeps 按配置选 Provider；明示用户意图与最终走向，缺 key 显式 warn 而非静默降级。
 func buildDeps(cfg config.Config) api.Deps {
-	var provider llm.Provider
-	if cfg.LLMProvider == "openai" && cfg.OpenAIAPIKey != "" {
-		provider = llm.NewOpenAIProvider(cfg.OpenAIBaseURL, cfg.OpenAIAPIKey, cfg.LLMModel)
-		slog.Info("llm provider", "type", "openai", "base", cfg.OpenAIBaseURL, "model", cfg.LLMModel)
-	} else {
-		provider = llm.NewMockProvider()
-		slog.Info("llm provider", "type", "mock")
-	}
+	provider := pickProvider(cfg)
 	return api.Deps{
 		Fetcher:  gh.NewRealFetcher(cfg.GithubToken),
 		Provider: provider,
+	}
+}
+
+func pickProvider(cfg config.Config) llm.Provider {
+	switch cfg.LLMProvider {
+	case "openai":
+		if cfg.OpenAIAPIKey == "" {
+			slog.Warn("LLM_PROVIDER=openai 但 OPENAI_API_KEY 未设，降级到 mock；请检查 .env 或 shell 环境变量")
+			slog.Info("llm provider", "type", "mock", "reason", "missing key")
+			return llm.NewMockProvider()
+		}
+		slog.Info("llm provider", "type", "openai", "base", cfg.OpenAIBaseURL, "model", cfg.LLMModel)
+		return llm.NewOpenAIProvider(cfg.OpenAIBaseURL, cfg.OpenAIAPIKey, cfg.LLMModel)
+	case "mock", "":
+		slog.Info("llm provider", "type", "mock")
+		return llm.NewMockProvider()
+	default:
+		slog.Warn("未知 LLM_PROVIDER 值，降级到 mock", "value", cfg.LLMProvider)
+		return llm.NewMockProvider()
 	}
 }
