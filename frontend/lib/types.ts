@@ -5,7 +5,7 @@ export interface Risk {
   file: string;
   line?: number;
   severity: "high" | "medium" | "low";
-  category: "bug" | "security" | "perf" | "style" | "other";
+  category: "bug" | "security" | "perf" | "style" | "concurrency" | "other";
   confidence: number; // 0-1，LLM 自评把握度；≥ 0.9 默认展开
   reason: string;
 }
@@ -19,7 +19,7 @@ export interface Patch {
 export interface Suggestion {
   file: string;
   line: number;
-  type: "bug" | "style" | "perf" | "security";
+  type: "bug" | "style" | "perf" | "security" | "concurrency";
   title: string;
   body: string;
   patch?: Patch | null; // LLM 给不出具体代码改写时为 null / 省略
