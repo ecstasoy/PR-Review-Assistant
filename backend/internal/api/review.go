@@ -122,6 +122,9 @@ func forwardStage(ctx context.Context, c prctx.Context, p llm.Provider, s review
 		return
 	}
 	for ev := range events {
+		if ev.Type == "done" {
+			continue // per-stage done is suppressed; PostReview emits a single terminal done
+		}
 		select {
 		case <-ctx.Done():
 			return
