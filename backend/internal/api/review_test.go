@@ -56,6 +56,17 @@ func (p *countingProvider) Stream(ctx context.Context, req llm.Request) (<-chan 
 	return p.inner.Stream(ctx, req)
 }
 
+func getJSON(t *testing.T, srv *httptest.Server, path string) (*http.Response, string) {
+	t.Helper()
+	res, err := http.Get(srv.URL + path)
+	if err != nil {
+		t.Fatalf("do GET: %v", err)
+	}
+	defer res.Body.Close()
+	buf, _ := io.ReadAll(res.Body)
+	return res, string(buf)
+}
+
 func postJSON(t *testing.T, srv *httptest.Server, path string, body any) (*http.Response, string) {
 	t.Helper()
 	b, _ := json.Marshal(body)
