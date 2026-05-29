@@ -16,7 +16,8 @@ export default async function ReviewDetailPage({ params }: PageProps) {
         </h1>
       </header>
       <SummaryCard reviewId={id} />
-      <RiskList reviewId={id} />
+      {/* 详情页尚未接通 store；后续 PR 调 getReview(id) 拿真实数据 */}
+      <RiskList risks={[]} />
       <DiffViewerWithAnnotations reviewId={id} />
     </section>
   );
