@@ -56,14 +56,19 @@ func PostReview(d Deps) gin.HandlerFunc {
 			risks      []review.Risk
 			risksErr   string
 		)
+		stageCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			summary, summaryErr = runSummary(ctx, pCtx, d.Provider)
+			summary, summaryErr = runSummary(stageCtx, pCtx, d.Provider)
+			if summaryErr != "" {
+				cancel()
+			}
 		}()
 		go func() {
 			defer wg.Done()
-			risks, risksErr = runRisks(ctx, pCtx, d.Provider)
+			risks, risksErr = runRisks(stageCtx, pCtx, d.Provider)
 		}()
 		wg.Wait()
 
