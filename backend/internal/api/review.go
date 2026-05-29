@@ -61,16 +61,8 @@ func PostReview(d Deps) gin.HandlerFunc {
 		c.Header("Connection", "keep-alive")
 		c.Header("X-Accel-Buffering", "no") // 关掉 nginx / 反代缓冲
 
-		// 首帧：PR meta —— 让前端立刻拿到 head_sha / title 显示在头部
-		writeSSE(c.Writer, "pr", map[string]any{
-			"id":       pr.HeadSHA,
-			"owner":    pr.Owner,
-			"repo":     pr.Repo,
-			"pr":       pr.Number,
-			"url":      url,
-			"head_sha": pr.HeadSHA,
-			"title":    pr.Title,
-		})
+		// 首帧：PR meta —— 让前端立刻拿到完整顶栏所需字段（CI 圆点 / 作者 / 状态 / 体量 / 分支）
+		writeSSE(c.Writer, "pr", prMetaPayload(pr, url))
 		c.Writer.Flush()
 
 		// 空 PR 短路：没有可评审的文件改动时，不跑 LLM，直接发 info + done
@@ -158,12 +150,44 @@ func PostReview(d Deps) gin.HandlerFunc {
 	}
 }
 
+// prMetaPayload 把 PR meta 打包成 SSE pr event 的 data。
+// 同时被 handler（首帧）和 detail endpoint（缓存命中后给前端兜底头部）共用同一形状。
+func prMetaPayload(pr gh.PullRequest, sourceURL string) map[string]any {
+	return map[string]any{
+		"id":            pr.HeadSHA,
+		"owner":         pr.Owner,
+		"repo":          pr.Repo,
+		"pr":            pr.Number,
+		"url":           sourceURL,
+		"head_sha":      pr.HeadSHA,
+		"title":         pr.Title,
+		"author":        pr.Author,
+		"state":         pr.State,
+		"labels":        pr.Labels,
+		"base_ref":      pr.BaseRef,
+		"head_ref":      pr.HeadRef,
+		"pr_created_at": pr.CreatedAt,
+		"stats":         pr.Stats,
+		"ci":            pr.CI,
+		"checks":        pr.Checks,
+	}
+}
+
 // persistReview 把本次评审序列化后写入 store；缓存写失败仅记日志，不影响响应。
 // 用 context.Background() 与请求生命周期解耦：写缓存时客户端可能已断开。
 func persistReview(s store.Store, pr gh.PullRequest, summary string, risks, suggestions json.RawMessage) {
 	payload, err := json.Marshal(cachedPayload{
 		Title:       pr.Title,
 		Files:       pr.Files,
+		Author:      pr.Author,
+		State:       pr.State,
+		Labels:      pr.Labels,
+		BaseRef:     pr.BaseRef,
+		HeadRef:     pr.HeadRef,
+		PRCreatedAt: pr.CreatedAt,
+		Stats:       pr.Stats,
+		CI:          pr.CI,
+		Checks:      pr.Checks,
 		Summary:     summary,
 		Risks:       risks,
 		Suggestions: suggestions,
@@ -246,4 +270,3 @@ func writeSSE(w http.ResponseWriter, eventType string, data any) {
 func writeSSERaw(w io.Writer, eventType string, data json.RawMessage) {
 	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, data)
 }
-

@@ -144,6 +144,108 @@ func TestParseLimit(t *testing.T) {
 	}
 }
 
+// seedFullReview 写一条 cached review，带 A1+A2 引入的完整 meta + checks + 自定义 risks。
+// 给 ListReviews CI/risks_counts 和 GetReview 全 meta 测试用。
+func seedFullReview(t *testing.T, s store.Store, risksJSON string) string {
+	t.Helper()
+	payload, _ := json.Marshal(cachedPayload{
+		Title:       "fix race",
+		Author:      "lin-mei",
+		State:       gh.StateOpen,
+		Labels:      []string{"bug", "concurrency"},
+		BaseRef:     "main",
+		HeadRef:     "fix/race",
+		PRCreatedAt: time.Date(2026, 5, 28, 10, 0, 0, 0, time.UTC),
+		Stats:       gh.Stats{Files: 5, Additions: 96, Deletions: 41, Commits: 4, Comments: 7},
+		CI:          gh.CIStatusPassing,
+		Checks: []gh.Check{
+			{Name: "build", Status: gh.CIStatusPassing, DurationMS: 24100},
+		},
+		Summary:     "summary text",
+		Risks:       json.RawMessage(risksJSON),
+		Suggestions: json.RawMessage(`[]`),
+	})
+	id := store.NewID()
+	rec := &store.Record{
+		ID: id, Owner: "golang", Repo: "go", PRNumber: 42, HeadSHA: "deadbeef",
+		Payload: payload, CreatedAt: time.Unix(2000, 0),
+	}
+	if err := s.Put(context.Background(), rec); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	return id
+}
+
+func TestListReviews_IncludesCIAndRiskCounts(t *testing.T) {
+	s := newTestStore(t)
+	seedFullReview(t, s, `[
+{"file":"a.go","severity":"high","category":"bug","confidence":0.9,"reason":"x"},
+{"file":"b.go","severity":"high","category":"bug","confidence":0.8,"reason":"y"},
+{"file":"c.go","severity":"medium","category":"perf","confidence":0.7,"reason":"z"},
+{"file":"d.go","severity":"low","category":"style","confidence":0.6,"reason":"w"}
+]`)
+
+	srv := startTestServer(t, Deps{Provider: llm.NewMockProvider(), Store: s})
+	res, body := getJSON(t, srv, "/api/reviews")
+	if res.StatusCode != 200 {
+		t.Fatalf("status=%d body=%s", res.StatusCode, body)
+	}
+	var list []map[string]any
+	if err := json.Unmarshal([]byte(body), &list); err != nil {
+		t.Fatalf("decode: %v body=%s", err, body)
+	}
+	if len(list) != 1 {
+		t.Fatalf("应返 1 条，得到 %d", len(list))
+	}
+	item := list[0]
+	if item["ci"] != "passing" {
+		t.Errorf("ci=%v want passing", item["ci"])
+	}
+	counts, _ := item["risk_counts"].(map[string]any)
+	if counts == nil {
+		t.Fatalf("缺 risk_counts: %v", item)
+	}
+	if counts["high"] != float64(2) || counts["medium"] != float64(1) || counts["low"] != float64(1) {
+		t.Errorf("risk_counts=%v want high:2 medium:1 low:1", counts)
+	}
+}
+
+func TestGetReview_IncludesFullMeta(t *testing.T) {
+	s := newTestStore(t)
+	id := seedFullReview(t, s, `[{"file":"a.go","severity":"high","category":"bug","confidence":0.9,"reason":"x"}]`)
+
+	srv := startTestServer(t, Deps{Provider: llm.NewMockProvider(), Store: s})
+	res, body := getJSON(t, srv, "/api/reviews/"+id)
+	if res.StatusCode != 200 {
+		t.Fatalf("status=%d body=%s", res.StatusCode, body)
+	}
+	var d map[string]any
+	if err := json.Unmarshal([]byte(body), &d); err != nil {
+		t.Fatalf("decode: %v body=%s", err, body)
+	}
+	if d["author"] != "lin-mei" || d["state"] != "open" || d["ci"] != "passing" {
+		t.Errorf("meta 字段缺失: %v", d)
+	}
+	if d["base_ref"] != "main" || d["head_ref"] != "fix/race" {
+		t.Errorf("refs 缺失: %v", d)
+	}
+	if labels, _ := d["labels"].([]any); len(labels) != 2 {
+		t.Errorf("labels=%v", d["labels"])
+	}
+	if stats, _ := d["stats"].(map[string]any); stats == nil || stats["files"] != float64(5) {
+		t.Errorf("stats 缺: %v", d["stats"])
+	}
+	if checks, _ := d["checks"].([]any); len(checks) != 1 {
+		t.Errorf("checks=%v", d["checks"])
+	}
+	if d["pr_created_at"] == nil {
+		t.Error("缺 pr_created_at")
+	}
+	if counts, _ := d["risk_counts"].(map[string]any); counts == nil || counts["high"] != float64(1) {
+		t.Errorf("risk_counts 缺: %v", d["risk_counts"])
+	}
+}
+
 func TestGetReview_IncludesFiles(t *testing.T) {
 	s := newTestStore(t)
 	payload, _ := json.Marshal(cachedPayload{
@@ -219,5 +321,26 @@ func TestListReviews_ExcludesFiles(t *testing.T) {
 	}
 	if _, hasFiles := list[0]["files"]; hasFiles {
 		t.Error("list 端不应包含 files 字段（detail 才有）")
+	}
+}
+
+func TestCountRisksBySeverity(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want riskCounts
+	}{
+		{"empty raw", "", riskCounts{}},
+		{"empty array", "[]", riskCounts{}},
+		{"single high", `[{"severity":"high"}]`, riskCounts{High: 1}},
+		{"mixed", `[{"severity":"high"},{"severity":"high"},{"severity":"medium"},{"severity":"low"},{"severity":"low"}]`, riskCounts{High: 2, Medium: 1, Low: 2}},
+		{"unknown severity ignored", `[{"severity":"critical"}]`, riskCounts{}},
+		{"malformed", `not json`, riskCounts{}},
+	}
+	for _, tc := range cases {
+		got := countRisksBySeverity(json.RawMessage(tc.in))
+		if got != tc.want {
+			t.Errorf("[%s] got=%+v want=%+v", tc.name, got, tc.want)
+		}
 	}
 }

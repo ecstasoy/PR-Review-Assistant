@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	gh "github.com/ecstasoy/PR-Review-Assistant/backend/internal/github"
 )
@@ -10,11 +11,23 @@ import (
 // cachedPayload 缓存的 review 内容。
 // summary 存累加后的全文；risks / suggestions 存 stage 原 event data 字节，
 // 让回放只需"原样写回"即可，避免与 review 包的具体类型耦合。
-// title 在 persist 时从 PR meta 抄过来，供 /history 列表展示。
-// files 用于 detail 端点回放 Diff 视图所需的文件树 + patch，免再回 GitHub。
+//
+// PR meta（title/author/state/labels/refs/createdAt/stats/ci/checks）在 persist 时从
+// fetcher 输出抄过来，让 /history 列表 + 详情可直接还原顶栏 / 卡片所需信息，免再 GitHub。
+// 新字段全部用 omitempty：旧缓存（PR #23 时期）payload 缺这些字段时 JSON 输出保持干净，
+// 前端按"字段缺失即未知"处理即可。
 type cachedPayload struct {
 	Title       string          `json:"title,omitempty"`
-	Files       []gh.File       `json:"files,omitempty"`
+	Author      string          `json:"author,omitempty"`
+	State       string          `json:"state,omitempty"`
+	Labels      []string        `json:"labels,omitempty"`
+	BaseRef     string          `json:"base_ref,omitempty"`
+	HeadRef     string          `json:"head_ref,omitempty"`
+	PRCreatedAt time.Time       `json:"pr_created_at,omitzero"` // PR 在 GitHub 上的创建时间（区别于 Record.CreatedAt 是评审记录的创建时间）
+	Stats       gh.Stats        `json:"stats,omitzero"`
+	CI          string          `json:"ci,omitempty"`
+	Checks      []gh.Check      `json:"checks,omitempty"`
+	Files       []gh.File       `json:"files,omitempty"` // detail 端点回放 Diff 视图所需文件树 + patch
 	Summary     string          `json:"summary"`
 	Risks       json.RawMessage `json:"risks"`
 	Suggestions json.RawMessage `json:"suggestions"`
