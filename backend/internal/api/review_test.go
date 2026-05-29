@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -16,6 +17,7 @@ import (
 	gh "github.com/ecstasoy/PR-Review-Assistant/backend/internal/github"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/llm"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/prctx"
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/store"
 )
 
 // fakeFetcher 让测试注入预设的 PR 数据或错误。
@@ -41,6 +43,17 @@ func startTestServer(t *testing.T, deps Deps) *httptest.Server {
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+// countingProvider 包装一个 Provider 并记录 Stream 调用次数，验证缓存命中是否真的跳过 LLM
+type countingProvider struct {
+	inner llm.Provider
+	calls atomic.Int32
+}
+
+func (p *countingProvider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Chunk, error) {
+	p.calls.Add(1)
+	return p.inner.Stream(ctx, req)
 }
 
 func postJSON(t *testing.T, srv *httptest.Server, path string, body any) (*http.Response, string) {
@@ -260,6 +273,161 @@ func TestPostReview_FetcherError(t *testing.T) {
 	res, body := postJSON(t, srv, "/api/review", map[string]string{"url": "https://github.com/o/r/pull/1"})
 	if res.StatusCode != 502 {
 		t.Errorf("status=%d, want 502; body=%s", res.StatusCode, body)
+	}
+}
+
+// newTestStore 起内存 SQLite 用于 cache 测试
+func newTestStore(t *testing.T) *store.SQLiteStore {
+	t.Helper()
+	s, err := store.NewSQLiteStore(":memory:")
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	return s
+}
+
+func samplePR() gh.PullRequest {
+	return gh.PullRequest{
+		Owner: "golang", Repo: "go", Number: 42, HeadSHA: "deadbeef", Title: "fix race",
+		Files: []gh.File{{Path: "scanner.go", Status: "modified", Patch: "@@ -1 +1 @@"}},
+	}
+}
+
+func TestPostReview_CacheMiss_PersistsResult(t *testing.T) {
+	s := newTestStore(t)
+	prov := &countingProvider{inner: dualMockProvider{
+		textReply: "缓存测试 摘要",
+		jsonReply: `{"risks":[{"file":"a.go","line":1,"severity":"low","category":"style","confidence":0.5,"reason":"ok"}],"suggestions":[]}`,
+	}}
+	srv := startTestServer(t, Deps{Fetcher: fakeFetcher{pr: samplePR()}, Provider: prov, Store: s})
+
+	res, body := postJSON(t, srv, "/api/review", map[string]string{"url": "https://github.com/golang/go/pull/42"})
+	if res.StatusCode != 200 {
+		t.Fatalf("status=%d body=%s", res.StatusCode, body)
+	}
+	if prov.calls.Load() == 0 {
+		t.Error("cache miss 应跑 stage，调用 Provider")
+	}
+
+	rec, err := s.Get(context.Background(), "golang", "go", 42, "deadbeef")
+	if err != nil {
+		t.Fatalf("store.Get: %v", err)
+	}
+	if rec == nil {
+		t.Fatal("缓存应被写入；得到 nil")
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Payload, &payload); err != nil {
+		t.Fatalf("payload not JSON: %v", err)
+	}
+	if !strings.Contains(payload["summary"].(string), "缓存测试") {
+		t.Errorf("summary 缺关键词: %v", payload["summary"])
+	}
+	if _, ok := payload["risks"]; !ok {
+		t.Errorf("缓存缺 risks 字段: %v", payload)
+	}
+}
+
+func TestPostReview_CacheHit_SkipsStages(t *testing.T) {
+	s := newTestStore(t)
+	// 预置一条缓存
+	cached, _ := json.Marshal(map[string]any{
+		"summary":     "回放的总结内容",
+		"risks":       json.RawMessage(`[{"file":"x.go","line":1,"severity":"high","category":"bug","confidence":0.9,"reason":"cached"}]`),
+		"suggestions": json.RawMessage(`[]`),
+	})
+	if err := s.Put(context.Background(), &store.Record{
+		ID: store.NewID(), Owner: "golang", Repo: "go", PRNumber: 42, HeadSHA: "deadbeef",
+		Payload: cached,
+	}); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
+
+	prov := &countingProvider{inner: llm.NewMockProvider()}
+	srv := startTestServer(t, Deps{Fetcher: fakeFetcher{pr: samplePR()}, Provider: prov, Store: s})
+
+	res, body := postJSON(t, srv, "/api/review", map[string]string{"url": "https://github.com/golang/go/pull/42"})
+	if res.StatusCode != 200 {
+		t.Fatalf("status=%d body=%s", res.StatusCode, body)
+	}
+	if prov.calls.Load() != 0 {
+		t.Errorf("cache hit 应跳过 LLM，调用次数 = %d", prov.calls.Load())
+	}
+
+	frames := parseSSE(body)
+	var (
+		sawSummary, sawRisks, sawDone bool
+		summaryText                   strings.Builder
+	)
+	for _, f := range frames {
+		switch f.Type {
+		case "summary_delta":
+			sawSummary = true
+			var p struct {
+				Delta string `json:"delta"`
+			}
+			_ = json.Unmarshal([]byte(f.Data), &p)
+			summaryText.WriteString(p.Delta)
+		case "risks_done":
+			sawRisks = true
+			if !strings.Contains(f.Data, "cached") {
+				t.Errorf("risks 应是缓存内容，得到 %s", f.Data)
+			}
+		case "done":
+			sawDone = true
+		}
+	}
+	if !sawSummary || !strings.Contains(summaryText.String(), "回放的总结内容") {
+		t.Errorf("summary_delta 应回放缓存文本，得到 %q", summaryText.String())
+	}
+	if !sawRisks {
+		t.Error("缺 risks_done 帧")
+	}
+	if !sawDone {
+		t.Error("缺 done 帧")
+	}
+}
+
+func TestPostReview_NilStore_NoCrashAndNoCache(t *testing.T) {
+	prov := &countingProvider{inner: dualMockProvider{
+		textReply: "summary",
+		jsonReply: `{"risks":[],"suggestions":[]}`,
+	}}
+	srv := startTestServer(t, Deps{Fetcher: fakeFetcher{pr: samplePR()}, Provider: prov, Store: nil})
+
+	res, _ := postJSON(t, srv, "/api/review", map[string]string{"url": "https://github.com/golang/go/pull/42"})
+	if res.StatusCode != 200 {
+		t.Errorf("nil Store 不应影响主流程，得到 status=%d", res.StatusCode)
+	}
+	if prov.calls.Load() == 0 {
+		t.Error("nil Store 时应正常跑 stage")
+	}
+}
+
+func TestPostReview_StageError_SkipsCache(t *testing.T) {
+	s := newTestStore(t)
+	// mockProvider 返非 JSON 文本 → RisksStage / SuggestionsStage 解析失败 → emit error event
+	srv := startTestServer(t, Deps{
+		Fetcher: fakeFetcher{pr: samplePR()},
+		Provider: dualMockProvider{
+			textReply: "summary text",
+			jsonReply: "not valid json",
+		},
+		Store: s,
+	})
+
+	res, body := postJSON(t, srv, "/api/review", map[string]string{"url": "https://github.com/golang/go/pull/42"})
+	if res.StatusCode != 200 {
+		t.Fatalf("status=%d body=%s", res.StatusCode, body)
+	}
+
+	rec, err := s.Get(context.Background(), "golang", "go", 42, "deadbeef")
+	if err != nil {
+		t.Fatalf("store.Get: %v", err)
+	}
+	if rec != nil {
+		t.Errorf("stage 报错时不应写缓存，得到 %+v", rec)
 	}
 }
 
