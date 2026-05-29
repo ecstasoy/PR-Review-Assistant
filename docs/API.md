@@ -37,7 +37,17 @@ Content-Type: application/json
   "url": "https://github.com/golang/go/pull/42",
   "head_sha": "abc123def456789...",
   "title": "fix race in scanner",
-  "summary": "这个 PR 修复了 scanner 中的竞态条件...\n- 关键文件：scanner.go\n- ..."
+  "summary": "这个 PR 修复了 scanner 中的竞态条件...\n- 关键文件：scanner.go\n- ...",
+  "risks": [
+    {
+      "file": "scanner.go",
+      "line": 42,
+      "severity": "high",
+      "category": "bug",
+      "confidence": 0.92,
+      "reason": "并发访问 mutable 字段未加锁"
+    }
+  ]
 }
 ```
 
@@ -51,6 +61,18 @@ Content-Type: application/json
 | `head_sha` | string | PR head 提交 SHA |
 | `title` | string | PR 标题 |
 | `summary` | string | LLM 生成的 markdown 总结（一段概述 + 3-5 条要点） |
+| `risks` | array | LLM 识别的风险清单；解析失败 / mock 模式下为 `[]` |
+
+**risks 项字段**：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `file` | string | 文件路径 |
+| `line` | int | 行号（可选，不确定时省略 → 0） |
+| `severity` | string | `high` / `medium` / `low` |
+| `category` | string | `bug` / `security` / `perf` / `style` / `other` |
+| `confidence` | float | 0-1，LLM 自评把握度；前端 ≥ 0.9 默认展开 |
+| `reason` | string | 中文说明，≤ 80 字 |
 
 **错误**
 
@@ -59,9 +81,10 @@ Content-Type: application/json
 | 400 | 请求 body 非合法 JSON | `{"error":"invalid request body"}` |
 | 400 | `url` 字段为空 | `{"error":"url is required"}` |
 | 400 | `url` 不是合法 GitHub PR 链接 | `{"error":"invalid GitHub PR URL"}` |
-| 500 | 总结阶段同步错误（模板渲染失败、Provider 同步报错） | `{"error":"summary failed","detail":"..."}` |
-| 500 | LLM 流中错误（HTTP 中断、JSON 解析失败等） | `{"error":"stream error","detail":"..."}` |
+| 500 | 总结阶段失败（模板 / Stream 同步错 / 流中错） | `{"error":"summary failed","detail":"..."}` |
 | 502 | GitHub API 调用失败（网络、404、速率限制） | `{"error":"fetch upstream failed","detail":"..."}` |
+
+**注意**：风险识别阶段失败**不致命** —— 服务器记 warn 日志后照常返 200，`risks` 字段为空数组。这是为了让 mock 模式（无法产 JSON）能演示总结输出。生产部署应监控 warn 日志检测 risks 频繁失败。
 
 ### 性能与限制
 
