@@ -158,10 +158,13 @@ function ResultCard({
 
       {!shortCircuited ? (
         <>
+          {stageErrors.context ? (
+            <StageErrorBanner stage="上下文" message={stageErrors.context} />
+          ) : null}
           <SummarySection
             summary={summary}
             streaming={streaming}
-            error={stageErrors.summary ?? stageErrors.context}
+            error={stageErrors.summary}
           />
           <Section
             title="风险"
