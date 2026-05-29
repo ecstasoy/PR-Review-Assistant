@@ -15,6 +15,7 @@ export interface StreamCallbacks {
   onSummaryDelta?: (delta: string) => void;
   onRisksDone?: (risks: Risk[]) => void;
   onSuggestionsDone?: (suggestions: Suggestion[]) => void;
+  onInfo?: (message: string) => void;
   onStageError?: (stage: string, message: string) => void;
   onDone?: () => void;
 }
@@ -105,6 +106,11 @@ function dispatch(ev: ParsedFrame, cb: StreamCallbacks): void {
     case "suggestions_done":
       cb.onSuggestionsDone?.(parsed as Suggestion[]);
       break;
+    case "info": {
+      const p = parsed as { message?: string };
+      if (p.message) cb.onInfo?.(p.message);
+      break;
+    }
     case "error": {
       const p = parsed as { stage?: string; message?: string };
       cb.onStageError?.(p.stage ?? "?", p.message ?? "");
