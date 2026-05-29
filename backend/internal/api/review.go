@@ -89,10 +89,13 @@ func PostReview(d Deps) gin.HandlerFunc {
 				var p cachedPayload
 				if uerr := json.Unmarshal(rec.Payload, &p); uerr != nil {
 					slog.Warn("cached payload unmarshal failed; falling through to stages", "err", uerr, "id", rec.ID)
+				} else if p.Risks == nil || p.Suggestions == nil || !json.Valid(p.Risks) || !json.Valid(p.Suggestions) {
+					slog.Warn("cached payload incomplete/invalid; falling through to stages", "id", rec.ID)
 				} else {
 					replayCached(c.Writer, p)
 					return
 				}
+			}
 			}
 		}
 
