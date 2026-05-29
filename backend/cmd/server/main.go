@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -55,7 +56,8 @@ func buildDeps(cfg config.Config) api.Deps {
 }
 
 func pickProvider(cfg config.Config) llm.Provider {
-	switch cfg.LLMProvider {
+	// LLM_PROVIDER 不区分大小写，容忍 "OpenAI" / "OPENAI" / "openai" 等写法
+	switch strings.ToLower(strings.TrimSpace(cfg.LLMProvider)) {
 	case "openai":
 		if cfg.OpenAIAPIKey == "" {
 			slog.Warn("LLM_PROVIDER=openai 但 OPENAI_API_KEY 未设，降级到 mock；请检查 .env 或 shell 环境变量")
