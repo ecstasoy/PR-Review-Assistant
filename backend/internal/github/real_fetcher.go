@@ -33,12 +33,12 @@ func (f *RealFetcher) Fetch(ctx context.Context, rawURL string) (PullRequest, er
 
 	pr, _, err := f.client.PullRequests.Get(ctx, owner, repo, number)
 	if err != nil {
-		return PullRequest{}, fmt.Errorf("get pull request: %w", err)
+		return PullRequest{}, fmt.Errorf("get pull request: %w", classifyGitHubError(err))
 	}
 
 	files, _, err := f.client.PullRequests.ListFiles(ctx, owner, repo, number, &gh.ListOptions{PerPage: 100})
 	if err != nil {
-		return PullRequest{}, fmt.Errorf("list pull request files: %w", err)
+		return PullRequest{}, fmt.Errorf("list pull request files: %w", classifyGitHubError(err))
 	}
 
 	out := PullRequest{

@@ -98,8 +98,34 @@ func TestRealFetcher_Fetch_PRNotFound(t *testing.T) {
 	defer cleanup()
 
 	_, err := f.Fetch(context.Background(), "https://github.com/owner/repo/pull/1")
-	if err == nil {
-		t.Fatal("期望 404 错误，但 Fetch 没报错")
+	if !errors.Is(err, ErrPRNotFound) {
+		t.Errorf("期望包装 ErrPRNotFound，得到 %v", err)
+	}
+}
+
+func TestRealFetcher_Fetch_AccessDenied(t *testing.T) {
+	srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"API rate limit exceeded"}`, http.StatusForbidden)
+	})
+	f, cleanup := stubServer(t, srv)
+	defer cleanup()
+
+	_, err := f.Fetch(context.Background(), "https://github.com/owner/repo/pull/1")
+	if !errors.Is(err, ErrAccessDenied) {
+		t.Errorf("期望包装 ErrAccessDenied，得到 %v", err)
+	}
+}
+
+func TestRealFetcher_Fetch_Unauthorized(t *testing.T) {
+	srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"Bad credentials"}`, http.StatusUnauthorized)
+	})
+	f, cleanup := stubServer(t, srv)
+	defer cleanup()
+
+	_, err := f.Fetch(context.Background(), "https://github.com/owner/repo/pull/1")
+	if !errors.Is(err, ErrAccessDenied) {
+		t.Errorf("401 也应归类为 ErrAccessDenied，得到 %v", err)
 	}
 }
 
