@@ -24,7 +24,7 @@ type Patch struct {
 type Suggestion struct {
 	File  string `json:"file"`
 	Line  int    `json:"line"`
-	Type  string `json:"type"` // bug | style | perf | security
+	Type  string `json:"type"` // bug | style | perf | security | concurrency
 	Title string `json:"title"`
 	Body  string `json:"body"`
 	Patch *Patch `json:"patch,omitempty"`
