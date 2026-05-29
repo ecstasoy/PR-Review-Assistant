@@ -1,0 +1,21 @@
+{{/* Summary stage：L1 + L2 patch + L3，输出一段中文总结 + 3-5 条要点 */ -}}
+你正在审阅一个 GitHub Pull Request。
+
+## PR 元信息
+{{ .L1Meta }}
+{{ with .L3Conventions }}
+## 项目约定
+{{ . }}
+{{ end }}
+{{ with .L2Files }}
+## 改动文件
+{{ range . -}}
+### {{ .Path }}
+```
+{{ .Patch }}
+```
+
+{{ end -}}
+{{ end }}
+## 任务
+用一段中文（≤ 120 字）概括这个 PR 的目的与做法，然后列出 3-5 条要点（每条 < 30 字）。仅输出 Markdown，不要解释思考过程。

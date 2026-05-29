@@ -113,7 +113,7 @@ Token 预算默认按 **L1:L2:L3 = 4:5:1** 分配；超限时按 L3 → L2 → L
 以下均为本项目原创：
 
 - 全部 Go 业务代码（GitHub 抓取、三层上下文构建、并行调度、SSE 流）
-- 三阶段 prompt 模板（`docs/prompts/*.tmpl`）
+- 三阶段 prompt 模板（`backend/internal/prompts/*.tmpl`，go:embed 进二进制）
 - 前端 UI 组件与 SSE 集成
 - token 预算裁剪策略
 
