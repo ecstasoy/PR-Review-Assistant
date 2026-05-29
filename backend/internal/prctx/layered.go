@@ -53,27 +53,44 @@ func NewLayeredBuilder(opts ...Option) *LayeredBuilder {
 
 // Build 按预算分配 + 压缩生成 Context。
 func (b *LayeredBuilder) Build(pr github.PullRequest) (Context, error) {
+	if b.TokenLimit <= 0 {
+		return Context{}, fmt.Errorf("token limit must be positive: %d", b.TokenLimit)
+	}
+
 	// L1：PR meta + per-file 加减行统计，体量小，永远全留
 	l1Str := buildL1Meta(pr)
 	l1Tokens := estimateTokens(l1Str)
+	if l1Tokens > b.TokenLimit {
+		return Context{}, fmt.Errorf("L1 meta exceeds token limit: used=%d limit=%d", l1Tokens, b.TokenLimit)
+	}
 
 	// L3：约定文件（v1 Fetcher 暂不填 Conventions，这里安全处理空值）
-	l3Str := buildL3Conventions(pr.Conventions)
+	l3StrFull := buildL3Conventions(pr.Conventions)
 	l3Budget := b.TokenLimit / 10 // 10% 预算
-	if estimateTokens(l3Str) > l3Budget {
+	maxL3Budget := b.TokenLimit - l1Tokens - floorL2Tokens
+	if maxL3Budget < 0 {
+		maxL3Budget = 0
+	}
+	if l3Budget > maxL3Budget {
+		l3Budget = maxL3Budget
+	}
+
+	l3Str := l3StrFull
+	if l3Budget == 0 {
+		l3Str = ""
+	} else if estimateTokens(l3Str) > l3Budget {
 		l3Str = truncate(l3Str, l3Budget*charsPerToken)
 	}
 	l3Tokens := estimateTokens(l3Str)
 
-	// L2 可用预算 = 总 - L1 - L3，保底 floorL2Tokens
+	// L2 可用预算 = 总 - L1 - L3（严格不超出 TokenLimit）
 	l2Avail := b.TokenLimit - l1Tokens - l3Tokens
-	if l2Avail < floorL2Tokens {
-		l2Avail = floorL2Tokens
+	if l2Avail < 0 {
+		l2Avail = 0
 	}
 
 	// L2 按 patch 大小逐个塞入；超出预算的文件入 Dropped 列表
 	l2Files, l2Used, dropped := allocateL2(pr.Files, l2Avail)
-
 	return Context{
 		L1Meta:        l1Str,
 		L2Files:       l2Files,
