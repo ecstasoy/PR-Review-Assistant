@@ -1,21 +1,23 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 
 	gh "github.com/ecstasoy/PR-Review-Assistant/backend/internal/github"
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/llm"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/prctx"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/review"
 )
 
-// PostReview 接收 { url } 入参，跑总结阶段并返 JSON 结果。
-// SSE 升级是独立 PR。
+// PostReview 接收 { url } 入参，并行跑 summary + risks 两阶段，返 JSON。
 func PostReview(d Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var body struct {
@@ -44,34 +46,37 @@ func PostReview(d Deps) gin.HandlerFunc {
 			return
 		}
 
-		events, err := (review.SummaryStage{}).Run(ctx, buildContext(pr), d.Provider)
-		if err != nil {
-			slog.Error("summary stage", "err", err)
-			c.JSON(500, gin.H{"error": "summary failed", "detail": err.Error()})
-			return
-		}
+		pCtx := buildContext(pr)
 
-		var summary strings.Builder
-		var streamErr string
-		for ev := range events {
-			switch ev.Type {
-			case "summary_delta":
-				var p struct {
-					Delta string `json:"delta"`
-				}
-				_ = json.Unmarshal(ev.Data, &p)
-				summary.WriteString(p.Delta)
-			case "error":
-				var p struct {
-					Message string `json:"message"`
-				}
-				_ = json.Unmarshal(ev.Data, &p)
-				streamErr = p.Message
-			}
-		}
-		if streamErr != "" {
-			c.JSON(500, gin.H{"error": "stream error", "detail": streamErr})
+		// 两阶段并行；summary 失败 → 500，risks 失败 → 仅 log warn，返空数组
+		var (
+			wg         sync.WaitGroup
+			summary    string
+			summaryErr string
+			risks      []review.Risk
+			risksErr   string
+		)
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			summary, summaryErr = runSummary(ctx, pCtx, d.Provider)
+		}()
+		go func() {
+			defer wg.Done()
+			risks, risksErr = runRisks(ctx, pCtx, d.Provider)
+		}()
+		wg.Wait()
+
+		if summaryErr != "" {
+			slog.Error("summary stage", "err", summaryErr)
+			c.JSON(500, gin.H{"error": "summary failed", "detail": summaryErr})
 			return
+		}
+		if risksErr != "" {
+			slog.Warn("risks stage failed; returning empty risks", "err", risksErr)
+		}
+		if risks == nil {
+			risks = []review.Risk{} // 保证 JSON 输出 [] 而非 null
 		}
 
 		c.JSON(200, gin.H{
@@ -82,9 +87,57 @@ func PostReview(d Deps) gin.HandlerFunc {
 			"url":      url,
 			"head_sha": pr.HeadSHA,
 			"title":    pr.Title,
-			"summary":  summary.String(),
+			"summary":  summary,
+			"risks":    risks,
 		})
 	}
+}
+
+// runSummary SummaryStage，把所有 delta 拼成 markdown 文本
+func runSummary(ctx context.Context, c prctx.Context, p llm.Provider) (text, errMsg string) {
+	events, err := (review.SummaryStage{}).Run(ctx, c, p)
+	if err != nil {
+		return "", err.Error()
+	}
+	var buf strings.Builder
+	for ev := range events {
+		switch ev.Type {
+		case "summary_delta":
+			var pl struct {
+				Delta string `json:"delta"`
+			}
+			_ = json.Unmarshal(ev.Data, &pl)
+			buf.WriteString(pl.Delta)
+		case "error":
+			var pl struct {
+				Message string `json:"message"`
+			}
+			_ = json.Unmarshal(ev.Data, &pl)
+			errMsg = pl.Message
+		}
+	}
+	return buf.String(), errMsg
+}
+
+// runRisks RisksStage，把 risks_done 事件 unmarshal 成 []Risk
+func runRisks(ctx context.Context, c prctx.Context, p llm.Provider) (risks []review.Risk, errMsg string) {
+	events, err := (review.RisksStage{}).Run(ctx, c, p)
+	if err != nil {
+		return nil, err.Error()
+	}
+	for ev := range events {
+		switch ev.Type {
+		case "risks_done":
+			_ = json.Unmarshal(ev.Data, &risks)
+		case "error":
+			var pl struct {
+				Message string `json:"message"`
+			}
+			_ = json.Unmarshal(ev.Data, &pl)
+			errMsg = pl.Message
+		}
+	}
+	return risks, errMsg
 }
 
 // buildContext 把 PullRequest 拍平成最简 prctx.Context（仅 L1 + L2 patch）。
