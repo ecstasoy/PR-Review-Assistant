@@ -1,16 +1,29 @@
 import type { ReviewResult } from "./types";
 
-// PR #5 接 POST /api/review
+const BASE = "/api";
+
+// postReview 调 POST /api/review，返回 LLM 总结结果。
+// 错误响应（4xx/5xx）抛出 Error，message 取后端 { error } 字段。
 export async function postReview(url: string): Promise<ReviewResult> {
-  throw new Error("postReview: not implemented yet (PR #5)");
+  const res = await fetch(`${BASE}/review`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = (data as { error?: string }).error ?? `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+  return data as ReviewResult;
 }
 
-// PR #14 接 GET /api/reviews
+// 后续 PR 接 GET /api/reviews
 export async function listReviews(): Promise<ReviewResult[]> {
-  throw new Error("listReviews: not implemented yet (PR #14)");
+  throw new Error("listReviews: not implemented yet");
 }
 
-// PR #15 接 GET /api/reviews/:id
+// 后续 PR 接 GET /api/reviews/:id
 export async function getReview(id: string): Promise<ReviewResult> {
-  throw new Error(`getReview(${id}): not implemented yet (PR #15)`);
+  throw new Error(`getReview(${id}): not implemented yet`);
 }
