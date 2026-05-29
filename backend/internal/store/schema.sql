@@ -8,9 +8,16 @@ CREATE TABLE IF NOT EXISTS reviews (
     pr_number   INTEGER NOT NULL,
     head_sha    TEXT NOT NULL,
     payload     BLOB NOT NULL,             -- 序列化后的 review.Result 字节数据
-    created_at  INTEGER NOT NULL,          -- Unix 时间戳（秒）
-    UNIQUE(owner, repo, pr_number, head_sha)
+    created_at  INTEGER NOT NULL           -- Unix 时间戳（纳秒）
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_public_unique
+    ON reviews(owner, repo, pr_number, head_sha)
+    WHERE user_id IS NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_user_unique
+    ON reviews(user_id, owner, repo, pr_number, head_sha)
+    WHERE user_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_reviews_user
     ON reviews(user_id, created_at DESC);

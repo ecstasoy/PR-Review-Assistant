@@ -119,6 +119,7 @@ Token 预算默认按 **L1:L2:L3 = 4:5:1** 分配；超限时按 L3 → L2 → L
 - `github.com/go-chi/chi/v5` — HTTP 路由
 - `github.com/google/go-github/v66` — GitHub REST 客户端
 - `github.com/mattn/go-sqlite3` — 缓存存储
+- `github.com/oklog/ulid/v2` — 评审记录 ID（时间排序，比 UUID 短 10 字符）
 - `github.com/caarlos0/env/v11` — 环境变量加载
 
 **前端（TypeScript）**
