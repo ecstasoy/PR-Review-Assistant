@@ -23,18 +23,18 @@ const (
 
 // Check 单个 CI 检查项（GitHub Actions / 第三方 CI 暴露的 check-run）。
 type Check struct {
-	Name       string // 检查名（如 "build" / "test (race)" / "lint (golangci)"）
-	Status     string // passing / failing / pending（与 CI 同枚举）
-	DurationMS int    // CompletedAt - StartedAt 毫秒；未完成时 0
+	Name       string `json:"name"`        // 检查名（如 "build" / "test (race)" / "lint (golangci)"）
+	Status     string `json:"status"`      // passing / failing / pending（与 CI 同枚举）
+	DurationMS int    `json:"duration_ms"` // CompletedAt - StartedAt 毫秒；未完成时 0
 }
 
 // Stats PR 体量统计（来自 GitHub API 的 pulls.Get 响应，无需额外请求）。
 type Stats struct {
-	Files     int // changed_files
-	Additions int
-	Deletions int
-	Commits   int
-	Comments  int // PR 评论数（不含 review comments）
+	Files     int `json:"files"` // changed_files
+	Additions int `json:"additions"`
+	Deletions int `json:"deletions"`
+	Commits   int `json:"commits"`
+	Comments  int `json:"comments"` // PR 评论数（不含 review comments）
 }
 
 // PullRequest 一次抓取的完整 PR 快照。
