@@ -16,6 +16,15 @@ export interface Patch {
   after: string;
 }
 
+// File PR 改动文件；raw unified diff text 在 patch 字段，前端用 react-diff-viewer-continued 渲染
+export interface File {
+  path: string;
+  status: "added" | "modified" | "removed" | "renamed";
+  patch: string;
+  additions: number;
+  deletions: number;
+}
+
 export interface Suggestion {
   file: string;
   line: number;
@@ -51,6 +60,7 @@ export interface ReviewSummary {
 
 // ReviewDetail /api/reviews/:id 详情；inline 缓存 payload
 export interface ReviewDetail extends ReviewSummary {
+  files?: File[];
   summary: string;
   risks?: Risk[];
   suggestions?: Suggestion[];

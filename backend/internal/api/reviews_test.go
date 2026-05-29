@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	gh "github.com/ecstasoy/PR-Review-Assistant/backend/internal/github"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/llm"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/store"
 )
@@ -140,5 +141,83 @@ func TestParseLimit(t *testing.T) {
 		if got := parseLimit(tc.in); got != tc.want {
 			t.Errorf("parseLimit(%q)=%d want %d", tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestGetReview_IncludesFiles(t *testing.T) {
+	s := newTestStore(t)
+	payload, _ := json.Marshal(cachedPayload{
+		Title: "with files",
+		Files: []gh.File{
+			{Path: "scanner.go", Status: "modified", Patch: "@@ -1 +1 @@", Additions: 1, Deletions: 1},
+			{Path: "README.md", Status: "added", Patch: "@@ -0 +1 @@\n+new", Additions: 1, Deletions: 0},
+		},
+		Summary:     "s",
+		Risks:       json.RawMessage(`[]`),
+		Suggestions: json.RawMessage(`[]`),
+	})
+	id := store.NewID()
+	rec := &store.Record{
+		ID: id, Owner: "o", Repo: "r", PRNumber: 1, HeadSHA: "sha",
+		Payload: payload, CreatedAt: time.Unix(1000, 0),
+	}
+	if err := s.Put(context.Background(), rec); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	srv := startTestServer(t, Deps{Provider: llm.NewMockProvider(), Store: s})
+	res, body := getJSON(t, srv, "/api/reviews/"+id)
+	if res.StatusCode != 200 {
+		t.Fatalf("status=%d body=%s", res.StatusCode, body)
+	}
+	var d map[string]any
+	if err := json.Unmarshal([]byte(body), &d); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	files, _ := d["files"].([]any)
+	if len(files) != 2 {
+		t.Fatalf("files 应 2 个，得到 %v", files)
+	}
+	f0, _ := files[0].(map[string]any)
+	if f0["path"] != "scanner.go" || f0["status"] != "modified" {
+		t.Errorf("files[0] 字段错: %+v", f0)
+	}
+	if _, leak := f0["full_text"]; leak {
+		t.Error("FullText 不应序列化")
+	}
+}
+
+func TestListReviews_ExcludesFiles(t *testing.T) {
+	// list 端不应返 files（每条体积大、列表 50 条爆响应）
+	s := newTestStore(t)
+	payload, _ := json.Marshal(cachedPayload{
+		Title: "with files",
+		Files: []gh.File{
+			{Path: "scanner.go", Status: "modified", Patch: "@@ -1 +1 @@"},
+		},
+		Summary:     "s",
+		Risks:       json.RawMessage(`[]`),
+		Suggestions: json.RawMessage(`[]`),
+	})
+	rec := &store.Record{
+		ID: store.NewID(), Owner: "o", Repo: "r", PRNumber: 1, HeadSHA: "sha",
+		Payload: payload, CreatedAt: time.Unix(1000, 0),
+	}
+	if err := s.Put(context.Background(), rec); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	srv := startTestServer(t, Deps{Provider: llm.NewMockProvider(), Store: s})
+	res, body := getJSON(t, srv, "/api/reviews")
+	if res.StatusCode != 200 {
+		t.Fatalf("status=%d body=%s", res.StatusCode, body)
+	}
+	var list []map[string]any
+	_ = json.Unmarshal([]byte(body), &list)
+	if len(list) == 0 {
+		t.Fatal("应有 1 条")
+	}
+	if _, hasFiles := list[0]["files"]; hasFiles {
+		t.Error("list 端不应包含 files 字段（detail 才有）")
 	}
 }

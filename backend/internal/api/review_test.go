@@ -507,3 +507,94 @@ func TestPostReview_AccessDenied(t *testing.T) {
 		t.Errorf("status=%d, want 403; body=%s", res.StatusCode, body)
 	}
 }
+
+func TestPostReview_FilesEvent_AfterPr(t *testing.T) {
+	pr := samplePR()
+	pr.Files = []gh.File{
+		{Path: "a.go", Status: "modified", Patch: "@@ -1 +1 @@\n-old\n+new", Additions: 1, Deletions: 1},
+		{Path: "b.go", Status: "added", Patch: "@@ -0 +1 @@\n+hello", Additions: 1, Deletions: 0},
+	}
+	srv := startTestServer(t, Deps{Fetcher: fakeFetcher{pr: pr}, Provider: llm.NewMockProvider()})
+
+	res, body := postJSON(t, srv, "/api/review", map[string]string{"url": "https://github.com/golang/go/pull/42"})
+	if res.StatusCode != 200 {
+		t.Fatalf("status=%d body=%s", res.StatusCode, body)
+	}
+
+	frames := parseSSE(body)
+	if len(frames) < 2 {
+		t.Fatalf("帧数不足: %d", len(frames))
+	}
+	if frames[0].Type != "pr" {
+		t.Errorf("首帧应是 pr，得到 %q", frames[0].Type)
+	}
+	if frames[1].Type != "files" {
+		t.Errorf("次帧应是 files（紧跟 pr），得到 %q", frames[1].Type)
+	}
+
+	var files []map[string]any
+	if err := json.Unmarshal([]byte(frames[1].Data), &files); err != nil {
+		t.Fatalf("files data not JSON array: %v body=%s", err, frames[1].Data)
+	}
+	if len(files) != 2 {
+		t.Fatalf("files 长度 %d 应为 2", len(files))
+	}
+	if files[0]["path"] != "a.go" || files[0]["status"] != "modified" {
+		t.Errorf("files[0] 错: %+v", files[0])
+	}
+	if files[0]["additions"] != float64(1) || files[0]["deletions"] != float64(1) {
+		t.Errorf("files[0] 加减行错: %+v", files[0])
+	}
+	if !strings.Contains(files[0]["patch"].(string), "@@") {
+		t.Errorf("files[0] patch 应含 diff 头: %v", files[0]["patch"])
+	}
+	if _, leak := files[0]["full_text"]; leak {
+		t.Error("FullText 不应序列化到 SSE（json:\"-\" 失效？）")
+	}
+}
+
+func TestPostReview_EmptyPR_OmitsFilesEvent(t *testing.T) {
+	pr := samplePR()
+	pr.Files = nil
+	srv := startTestServer(t, Deps{Fetcher: fakeFetcher{pr: pr}, Provider: llm.NewMockProvider()})
+
+	_, body := postJSON(t, srv, "/api/review", map[string]string{"url": "https://github.com/golang/go/pull/42"})
+	for _, f := range parseSSE(body) {
+		if f.Type == "files" {
+			t.Errorf("空 PR 不应发 files 帧；得到 %s", f.Data)
+		}
+	}
+}
+
+func TestPostReview_CacheMiss_PersistsFiles(t *testing.T) {
+	s := newTestStore(t)
+	pr := samplePR()
+	pr.Files = []gh.File{
+		{Path: "scanner.go", Status: "modified", Patch: "@@ patch @@", Additions: 5, Deletions: 2},
+	}
+	srv := startTestServer(t, Deps{
+		Fetcher: fakeFetcher{pr: pr},
+		Provider: dualMockProvider{
+			textReply: "summary",
+			jsonReply: `{"risks":[],"suggestions":[]}`,
+		},
+		Store: s,
+	})
+
+	res, body := postJSON(t, srv, "/api/review", map[string]string{"url": "https://github.com/golang/go/pull/42"})
+	if res.StatusCode != 200 {
+		t.Fatalf("status=%d body=%s", res.StatusCode, body)
+	}
+
+	rec, _ := s.Get(context.Background(), "golang", "go", 42, "deadbeef")
+	if rec == nil {
+		t.Fatal("缓存应被写入")
+	}
+	var p cachedPayload
+	if err := json.Unmarshal(rec.Payload, &p); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if len(p.Files) != 1 || p.Files[0].Path != "scanner.go" || p.Files[0].Patch == "" {
+		t.Errorf("Files 未持久化或字段缺失: %+v", p.Files)
+	}
+}

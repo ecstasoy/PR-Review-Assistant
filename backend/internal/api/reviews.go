@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	gh "github.com/ecstasoy/PR-Review-Assistant/backend/internal/github"
 )
 
 const (
@@ -27,8 +29,10 @@ type reviewListItem struct {
 }
 
 // reviewDetail /api/reviews/:id 详情；inline 缓存 payload 的字段。
+// files 给 Diff 视图渲染用；list 端不返 files（每条可能 100KB+，列表 50 条爆体积）。
 type reviewDetail struct {
 	reviewListItem
+	Files       []gh.File       `json:"files,omitempty"`
 	Summary     string          `json:"summary"`
 	Risks       json.RawMessage `json:"risks,omitempty"`
 	Suggestions json.RawMessage `json:"suggestions,omitempty"`
@@ -104,6 +108,7 @@ func GetReview(d Deps) gin.HandlerFunc {
 				Title:     p.Title,
 				CreatedAt: rec.CreatedAt.UTC().Format(time.RFC3339),
 			},
+			Files:       p.Files,
 			Summary:     p.Summary,
 			Risks:       p.Risks,
 			Suggestions: p.Suggestions,
