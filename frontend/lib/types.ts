@@ -38,6 +38,24 @@ export interface ReviewResult {
   suggestions?: Suggestion[]; // 后续 PR 填
 }
 
+// ReviewSummary /api/reviews 列表项；不含 payload
+export interface ReviewSummary {
+  id: string;
+  owner: string;
+  repo: string;
+  pr: number;
+  head_sha: string;
+  title?: string;
+  created_at: string; // RFC3339
+}
+
+// ReviewDetail /api/reviews/:id 详情；inline 缓存 payload
+export interface ReviewDetail extends ReviewSummary {
+  summary: string;
+  risks?: Risk[];
+  suggestions?: Suggestion[];
+}
+
 export type EventType =
   | "summary_delta"
   | "risks_done"

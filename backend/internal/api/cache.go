@@ -8,7 +8,9 @@ import (
 // cachedPayload 缓存的 review 内容。
 // summary 存累加后的全文；risks / suggestions 存 stage 原 event data 字节，
 // 让回放只需"原样写回"即可，避免与 review 包的具体类型耦合。
+// title 在 persist 时从 PR meta 抄过来，供 /history 列表展示。
 type cachedPayload struct {
+	Title       string          `json:"title,omitempty"`
 	Summary     string          `json:"summary"`
 	Risks       json.RawMessage `json:"risks"`
 	Suggestions json.RawMessage `json:"suggestions"`
