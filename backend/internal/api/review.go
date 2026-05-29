@@ -138,6 +138,8 @@ func writeSSE(w http.ResponseWriter, eventType string, data any) {
 
 // writeSSERaw c.Stream 内部用；payload 已是 json.RawMessage，避免双次 Marshal。
 // c.Stream 在 step 返回后自动 Flush。
+// Invariant: data must be single-line JSON (no literal newlines); do not pretty-print,
+// as embedded newlines would break SSE framing (each data: line must be a complete field).
 func writeSSERaw(w io.Writer, eventType string, data json.RawMessage) {
 	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, data)
 }
