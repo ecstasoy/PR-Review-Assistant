@@ -14,6 +14,7 @@ import (
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/config"
 	gh "github.com/ecstasoy/PR-Review-Assistant/backend/internal/github"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/llm"
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/prctx"
 )
 
 func main() {
@@ -52,6 +53,7 @@ func buildDeps(cfg config.Config) api.Deps {
 	return api.Deps{
 		Fetcher:  gh.NewRealFetcher(cfg.GithubToken),
 		Provider: provider,
+		Builder:  prctx.NewLayeredBuilder(),
 	}
 }
 

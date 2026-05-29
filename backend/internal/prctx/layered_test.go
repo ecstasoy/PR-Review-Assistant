@@ -1,0 +1,164 @@
+package prctx
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/github"
+)
+
+func newPR(files []github.File) github.PullRequest {
+	return github.PullRequest{
+		Owner:   "golang",
+		Repo:    "go",
+		Number:  42,
+		HeadSHA: "deadbeef",
+		Title:   "fix race",
+		Body:    "fixes #123",
+		Files:   files,
+	}
+}
+
+func TestLayered_BasicMeta(t *testing.T) {
+	b := NewLayeredBuilder()
+	pr := newPR([]github.File{
+		{Path: "a.go", Status: "modified", Patch: "@@ small @@", Additions: 1, Deletions: 1},
+	})
+	ctx, err := b.Build(pr)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	if !strings.Contains(ctx.L1Meta, "golang/go#42") {
+		t.Errorf("L1 缺仓库标识: %q", ctx.L1Meta)
+	}
+	if !strings.Contains(ctx.L1Meta, "fix race") {
+		t.Errorf("L1 缺标题: %q", ctx.L1Meta)
+	}
+	if !strings.Contains(ctx.L1Meta, "- a.go (modified) +1 -1") {
+		t.Errorf("L1 缺 per-file 统计: %q", ctx.L1Meta)
+	}
+}
+
+func TestLayered_PatchesFitInBudget(t *testing.T) {
+	b := NewLayeredBuilder()
+	pr := newPR([]github.File{
+		{Path: "a.go", Patch: strings.Repeat("a", 100)},
+		{Path: "b.go", Patch: strings.Repeat("b", 100)},
+	})
+	ctx, err := b.Build(pr)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(ctx.L2Files) != 2 {
+		t.Errorf("两个小文件都应保留，得到 %d 个", len(ctx.L2Files))
+	}
+	if len(ctx.BudgetReport.Dropped) != 0 {
+		t.Errorf("不应有 Dropped，得到 %v", ctx.BudgetReport.Dropped)
+	}
+}
+
+func TestLayered_DropsLargeFiles(t *testing.T) {
+	// 限到 2000 tokens；L1 + L3 占去一部分，剩余 L2 大约 ~1500
+	b := NewLayeredBuilder(WithTokenLimit(2000))
+	pr := newPR([]github.File{
+		{Path: "small.go", Patch: strings.Repeat("a", 100)},  // ~33 tokens
+		{Path: "huge.go", Patch: strings.Repeat("b", 50000)}, // ~16667 tokens，必丢
+	})
+	ctx, err := b.Build(pr)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	var paths []string
+	for _, f := range ctx.L2Files {
+		paths = append(paths, f.Path)
+	}
+	if !contains(paths, "small.go") {
+		t.Errorf("small.go 应保留: %v", paths)
+	}
+	if contains(paths, "huge.go") {
+		t.Errorf("huge.go 不应保留: %v", paths)
+	}
+	if !contains(ctx.BudgetReport.Dropped, "huge.go") {
+		t.Errorf("huge.go 应在 Dropped: %v", ctx.BudgetReport.Dropped)
+	}
+}
+
+func TestLayered_L3Conventions(t *testing.T) {
+	b := NewLayeredBuilder()
+	pr := newPR([]github.File{{Path: "a.go", Patch: "x"}})
+	pr.Conventions = github.Conventions{
+		Readme:    "# Go Repo",
+		AgentDocs: "Use errors.Is for sentinels.",
+	}
+
+	ctx, err := b.Build(pr)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if !strings.Contains(ctx.L3Conventions, "## README") {
+		t.Errorf("L3 缺 README 段: %q", ctx.L3Conventions)
+	}
+	if !strings.Contains(ctx.L3Conventions, "## AGENT DOCS") {
+		t.Errorf("L3 缺 AGENT DOCS 段: %q", ctx.L3Conventions)
+	}
+	if !strings.Contains(ctx.L3Conventions, "errors.Is") {
+		t.Errorf("L3 内容错: %q", ctx.L3Conventions)
+	}
+}
+
+func TestLayered_L3TruncatedWhenLarge(t *testing.T) {
+	b := NewLayeredBuilder(WithTokenLimit(2000))
+	pr := newPR([]github.File{{Path: "a.go", Patch: "x"}})
+	// L3 预算 = 2000/10 = 200 tokens ≈ 600 chars；写 100K chars 必截断
+	pr.Conventions = github.Conventions{Readme: strings.Repeat("R", 100000)}
+
+	ctx, err := b.Build(pr)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if !strings.HasSuffix(ctx.L3Conventions, "truncated]") {
+		t.Errorf("L3 应被截断带 truncated 标记: 末尾 = %q", ctx.L3Conventions[max(0, len(ctx.L3Conventions)-30):])
+	}
+	if ctx.BudgetReport.UsedL3 > 250 {
+		t.Errorf("L3 用 tokens 应 < 250，得到 %d", ctx.BudgetReport.UsedL3)
+	}
+}
+
+func TestLayered_BudgetReport(t *testing.T) {
+	b := NewLayeredBuilder(WithTokenLimit(10000))
+	pr := newPR([]github.File{
+		{Path: "a.go", Patch: strings.Repeat("a", 300)},
+	})
+	ctx, err := b.Build(pr)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	r := ctx.BudgetReport
+	if r.TokenLimit != 10000 {
+		t.Errorf("TokenLimit=%d", r.TokenLimit)
+	}
+	if r.UsedL1 == 0 {
+		t.Errorf("UsedL1 应 > 0")
+	}
+	if r.UsedL2 == 0 {
+		t.Errorf("UsedL2 应 > 0")
+	}
+	if r.UsedL3 != 0 {
+		t.Errorf("空 conventions 时 UsedL3 应 = 0，得到 %d", r.UsedL3)
+	}
+	if len(r.Dropped) != 0 {
+		t.Errorf("无丢弃时 Dropped 应空: %v", r.Dropped)
+	}
+}
+
+func contains(ss []string, target string) bool {
+	for _, s := range ss {
+		if s == target {
+			return true
+		}
+	}
+	return false
+}
