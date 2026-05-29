@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -15,6 +16,7 @@ import (
 	gh "github.com/ecstasoy/PR-Review-Assistant/backend/internal/github"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/llm"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/prctx"
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/store"
 )
 
 func main() {
@@ -48,13 +50,29 @@ func main() {
 }
 
 // buildDeps 按配置选 Provider；明示用户意图与最终走向，缺 key 显式 warn 而非静默降级。
+// Store 打开失败仅 warn，handler 已 nil-safe；缓存 + 历史功能降级停用而非整个服务挂。
 func buildDeps(cfg config.Config) api.Deps {
 	provider := pickProvider(cfg)
-	return api.Deps{
+	deps := api.Deps{
 		Fetcher:  gh.NewRealFetcher(cfg.GithubToken),
 		Provider: provider,
 		Builder:  prctx.NewLayeredBuilder(),
 	}
+	// 确保 SQLite 文件的父目录存在；sqlite3 自己不会建目录
+	if cfg.SQLitePath != ":memory:" {
+		if dir := filepath.Dir(cfg.SQLitePath); dir != "" && dir != "." {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				slog.Warn("ensure sqlite dir failed", "dir", dir, "err", err)
+			}
+		}
+	}
+	if s, err := store.NewSQLiteStore(cfg.SQLitePath); err != nil {
+		slog.Warn("open sqlite store failed; cache + history disabled", "path", cfg.SQLitePath, "err", err)
+	} else {
+		slog.Info("store ready", "path", cfg.SQLitePath)
+		deps.Store = s
+	}
+	return deps
 }
 
 func pickProvider(cfg config.Config) llm.Provider {
