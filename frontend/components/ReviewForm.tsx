@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 
 import { postReview } from "@/lib/api";
 import type { ReviewResult } from "@/lib/types";
+import { RiskList } from "./RiskList";
 
 export function ReviewForm() {
   const [url, setUrl] = useState("");
@@ -77,6 +78,11 @@ function ResultCard({ result }: { result: ReviewResult }) {
           {result.summary}
         </ReactMarkdown>
       </div>
+      {result.risks && result.risks.length > 0 ? (
+        <div className="mt-5 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+          <RiskList risks={result.risks} />
+        </div>
+      ) : null}
     </article>
   );
 }
