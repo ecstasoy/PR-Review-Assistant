@@ -17,6 +17,7 @@ import (
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/llm"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/prctx"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/review"
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/store"
 )
 
 // PostReview 接收 { url }，先用 JSON 处理预检错误；
@@ -80,6 +81,24 @@ func PostReview(d Deps) gin.HandlerFunc {
 			return
 		}
 
+		// 缓存命中：同 (owner, repo, pr, head_sha) 有完整结果直接回放，跳过 LLM
+		if d.Store != nil {
+			if rec, gerr := d.Store.Get(ctx, pr.Owner, pr.Repo, pr.Number, pr.HeadSHA); gerr != nil {
+				slog.Warn("cache get failed; falling through to stages", "err", gerr)
+			} else if rec != nil {
+				var p cachedPayload
+				if uerr := json.Unmarshal(rec.Payload, &p); uerr != nil {
+					slog.Warn("cached payload unmarshal failed; falling through to stages", "err", uerr, "id", rec.ID)
+				} else if p.Risks == nil || p.Suggestions == nil || !json.Valid(p.Risks) || !json.Valid(p.Suggestions) {
+					slog.Warn("cached payload incomplete/invalid; falling through to stages", "id", rec.ID)
+				} else {
+					replayCached(c.Writer, p)
+					return
+				}
+			}
+			}
+		}
+
 		builder := d.Builder
 		if builder == nil {
 			builder = prctx.NewLayeredBuilder()
@@ -96,19 +115,68 @@ func PostReview(d Deps) gin.HandlerFunc {
 		}
 		merged := mergeStages(ctx, pCtx, d.Provider)
 
+		// 边推流边收集供后续 cache 写入；stage 任一报错则不写缓存（避免缓存半残结果）
+		var (
+			summaryBuf       strings.Builder
+			risksData        json.RawMessage
+			suggestionsData  json.RawMessage
+			stageErrObserved bool
+		)
 		c.Stream(func(w io.Writer) bool {
 			select {
 			case <-ctx.Done():
 				return false
 			case ev, ok := <-merged:
 				if !ok {
+					if d.Store != nil && !stageErrObserved && risksData != nil && suggestionsData != nil {
+						persistReview(d.Store, pr, summaryBuf.String(), risksData, suggestionsData)
+					}
 					writeSSERaw(w, "done", json.RawMessage(`{}`))
 					return false
+				}
+				switch ev.Type {
+				case "summary_delta":
+					var p struct {
+						Delta string `json:"delta"`
+					}
+					_ = json.Unmarshal(ev.Data, &p)
+					summaryBuf.WriteString(p.Delta)
+				case "risks_done":
+					risksData = ev.Data
+				case "suggestions_done":
+					suggestionsData = ev.Data
+				case "error":
+					stageErrObserved = true
 				}
 				writeSSERaw(w, ev.Type, ev.Data)
 				return true
 			}
 		})
+	}
+}
+
+// persistReview 把本次评审序列化后写入 store；缓存写失败仅记日志，不影响响应。
+// 用 context.Background() 与请求生命周期解耦：写缓存时客户端可能已断开。
+func persistReview(s store.Store, pr gh.PullRequest, summary string, risks, suggestions json.RawMessage) {
+	payload, err := json.Marshal(cachedPayload{
+		Summary:     summary,
+		Risks:       risks,
+		Suggestions: suggestions,
+	})
+	if err != nil {
+		slog.Error("cache marshal", "err", err)
+		return
+	}
+	rec := &store.Record{
+		ID:       store.NewID(),
+		Owner:    pr.Owner,
+		Repo:     pr.Repo,
+		PRNumber: pr.Number,
+		HeadSHA:  pr.HeadSHA,
+		Payload:  payload,
+	}
+	if err := s.Put(context.Background(), rec); err != nil {
+		slog.Error("cache put", "err", err, "owner", pr.Owner, "repo", pr.Repo, "pr", pr.Number)
 	}
 }
 
