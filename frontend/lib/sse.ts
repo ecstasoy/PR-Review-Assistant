@@ -44,19 +44,23 @@ export async function streamReview(
   const decoder = new TextDecoder();
   let buf = "";
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
 
-    // 按 \n\n 切帧；最后一段可能是不完整的，留在 buf
-    const parts = buf.split("\n\n");
-    buf = parts.pop() ?? "";
+      // 按 \n\n 切帧；最后一段可能是不完整的，留在 buf
+      const parts = buf.split("\n\n");
+      buf = parts.pop() ?? "";
 
-    for (const frame of parts) {
-      const parsed = parseFrame(frame);
-      if (parsed) dispatch(parsed, cb);
+      for (const frame of parts) {
+        const parsed = parseFrame(frame);
+        if (parsed) dispatch(parsed, cb);
+      }
     }
+  } finally {
+    reader.releaseLock();
   }
 }
 
