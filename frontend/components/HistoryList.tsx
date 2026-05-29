@@ -40,7 +40,7 @@ export function HistoryList() {
       {items.map((item) => (
         <li key={item.id}>
           <Link
-            href={`/history/${item.id}`}
+            href={`/review/${item.id}`}
             className="block rounded-md border border-zinc-200 p-4 transition-colors hover:border-zinc-400 dark:border-zinc-800 dark:hover:border-zinc-600"
           >
             <div className="flex items-start justify-between gap-3">
