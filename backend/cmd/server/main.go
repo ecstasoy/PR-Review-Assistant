@@ -1,4 +1,4 @@
-// 后端 HTTP 服务入口：装配 slog → 读配置 → 构造依赖 → Gin → 注册路由。
+// 后端 HTTP 服务入口：装配 slog → 加载 .env → 读配置 → 构造依赖 → Gin → 注册路由。
 package main
 
 import (
@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
 
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/api"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/config"
@@ -17,6 +18,14 @@ import (
 func main() {
 	// 全局 JSON 结构化日志
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+
+	// 尝试加载 .env（从 CWD 或项目根）；生产环境直接走 process env，无文件不报错
+	for _, p := range []string{".env", "backend/.env"} {
+		if err := godotenv.Load(p); err == nil {
+			slog.Info("loaded env file", "path", p)
+			break
+		}
+	}
 
 	cfg := config.MustLoad()
 	deps := buildDeps(cfg)
