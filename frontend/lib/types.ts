@@ -10,11 +10,19 @@ export interface Risk {
   reason: string;
 }
 
+export interface Patch {
+  lang: string;
+  before: string;
+  after: string;
+}
+
 export interface Suggestion {
   file: string;
   line: number;
   type: "bug" | "style" | "perf" | "security";
-  suggestion: string;
+  title: string;
+  body: string;
+  patch?: Patch | null; // LLM 给不出具体代码改写时为 null / 省略
 }
 
 export interface ReviewResult {

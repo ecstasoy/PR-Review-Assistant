@@ -1,4 +1,4 @@
-import type { Risk } from "./types";
+import type { Risk, Suggestion } from "./types";
 
 export interface PrMeta {
   id: string;
@@ -14,6 +14,7 @@ export interface StreamCallbacks {
   onPr?: (pr: PrMeta) => void;
   onSummaryDelta?: (delta: string) => void;
   onRisksDone?: (risks: Risk[]) => void;
+  onSuggestionsDone?: (suggestions: Suggestion[]) => void;
   onStageError?: (stage: string, message: string) => void;
   onDone?: () => void;
 }
@@ -100,6 +101,9 @@ function dispatch(ev: ParsedFrame, cb: StreamCallbacks): void {
     }
     case "risks_done":
       cb.onRisksDone?.(parsed as Risk[]);
+      break;
+    case "suggestions_done":
+      cb.onSuggestionsDone?.(parsed as Suggestion[]);
       break;
     case "error": {
       const p = parsed as { stage?: string; message?: string };
