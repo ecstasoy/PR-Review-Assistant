@@ -10,7 +10,7 @@ import { CapabilityCards } from "@/components/landing/CapabilityCards";
 import { HeroBanner } from "@/components/landing/HeroBanner";
 import { RecentReviewsList } from "@/components/landing/RecentReviewsList";
 import { UrlInputCard } from "@/components/landing/UrlInputCard";
-import { RiskList } from "@/components/RiskList";
+import { RisksList } from "@/components/review/RisksList";
 import { SuggestionList } from "@/components/SuggestionList";
 import { Spinner } from "@/components/ui/spinner";
 
@@ -212,7 +212,7 @@ function RisksSection({
   risksReceived: boolean;
 }) {
   if (error) return <StageErrorBanner stage="风险" message={error} />;
-  if (risks.length > 0) return <RiskList risks={risks} />;
+  if (risks.length > 0) return <RisksList risks={risks} />;
   if (risksReceived) return <p className="text-sm text-muted">未发现风险。</p>;
   if (streaming) return <p className="text-sm text-faint">扫描风险中…</p>;
   return null;

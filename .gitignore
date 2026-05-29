@@ -64,3 +64,6 @@ pnpm-debug.log*
 *.log
 tmp/
 .cache/
+
+# 设计交接包（仅本地参考，不进 repo）
+prototype/
