@@ -19,11 +19,13 @@ func main() {
 	// 全局 JSON 结构化日志
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 
-	// 尝试加载 .env（从 CWD 或项目根）；生产环境直接走 process env，无文件不报错
+	// 尝试加载 .env（相对于当前工作目录）；生产环境一般无 .env：文件不存在时忽略，其它错误给出告警
 	for _, p := range []string{".env", "backend/.env"} {
 		if err := godotenv.Load(p); err == nil {
 			slog.Info("loaded env file", "path", p)
 			break
+		} else if !os.IsNotExist(err) {
+			slog.Warn("failed to load env file", "path", p, "err", err)
 		}
 	}
 
