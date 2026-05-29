@@ -4,28 +4,36 @@ import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { postReview } from "@/lib/api";
-import type { ReviewResult } from "@/lib/types";
+import { streamReview, type PrMeta } from "@/lib/sse";
+import type { Risk } from "@/lib/types";
 import { RiskList } from "./RiskList";
 
 export function ReviewForm() {
   const [url, setUrl] = useState("");
-  const [submitting, setSubmitting] = useState(false);
+  const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<ReviewResult | null>(null);
+  const [pr, setPr] = useState<PrMeta | null>(null);
+  const [summary, setSummary] = useState("");
+  const [risks, setRisks] = useState<Risk[]>([]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    setResult(null);
-    setSubmitting(true);
+    setPr(null);
+    setSummary("");
+    setRisks([]);
+    setStreaming(true);
     try {
-      const r = await postReview(url);
-      setResult(r);
+      await streamReview(url, {
+        onPr: setPr,
+        onSummaryDelta: (delta) => setSummary((s) => s + delta),
+        onRisksDone: setRisks,
+        onStageError: (stage, msg) => setError(`${stage}: ${msg}`),
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setSubmitting(false);
+      setStreaming(false);
     }
   }
 
@@ -39,48 +47,71 @@ export function ReviewForm() {
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             placeholder="https://github.com/owner/repo/pull/123"
-            disabled={submitting}
+            disabled={streaming}
             className="mt-1 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-zinc-900 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:focus:border-zinc-100"
             required
           />
         </label>
         <button
           type="submit"
-          disabled={submitting || !url}
+          disabled={streaming || !url}
           className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
         >
-          {submitting ? "分析中…" : "开始评审"}
+          {streaming ? "分析中…" : "开始评审"}
         </button>
         {error ? (
           <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
         ) : null}
       </form>
 
-      {result ? <ResultCard result={result} /> : null}
+      {pr || streaming ? (
+        <ResultCard pr={pr} summary={summary} risks={risks} streaming={streaming} />
+      ) : null}
     </div>
   );
 }
 
-function ResultCard({ result }: { result: ReviewResult }) {
+interface ResultCardProps {
+  pr: PrMeta | null;
+  summary: string;
+  risks: Risk[];
+  streaming: boolean;
+}
+
+function ResultCard({ pr, summary, risks, streaming }: ResultCardProps) {
   return (
     <article className="rounded-lg border border-zinc-200 p-5 dark:border-zinc-800">
       <header className="mb-3 border-b border-zinc-200 pb-2 dark:border-zinc-800">
-        <h2 className="text-lg font-medium">{result.title}</h2>
-        <p className="mt-1 text-xs text-zinc-500">
-          {result.owner}/{result.repo}#{result.pr} ·{" "}
-          <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">
-            {result.head_sha.slice(0, 7)}
-          </code>
-        </p>
+        {pr ? (
+          <>
+            <h2 className="text-lg font-medium">{pr.title}</h2>
+            <p className="mt-1 text-xs text-zinc-500">
+              {pr.owner}/{pr.repo}#{pr.pr} ·{" "}
+              <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">
+                {pr.head_sha.slice(0, 7)}
+              </code>
+              {streaming ? <span className="ml-2 text-zinc-400">流式分析中…</span> : null}
+            </p>
+          </>
+        ) : (
+          <p className="text-xs text-zinc-500">等待 GitHub 响应…</p>
+        )}
       </header>
-      <div className="space-y-3 text-sm leading-relaxed [&_code]:rounded [&_code]:bg-zinc-100 [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-xs [&_h1]:mt-4 [&_h1]:text-xl [&_h1]:font-semibold [&_h2]:mt-3 [&_h2]:text-lg [&_h2]:font-medium [&_li]:my-1 [&_p]:my-2 [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5 dark:[&_code]:bg-zinc-800">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-          {result.summary}
-        </ReactMarkdown>
-      </div>
-      {result.risks && result.risks.length > 0 ? (
+
+      {summary ? (
+        <div className="space-y-3 text-sm leading-relaxed [&_code]:rounded [&_code]:bg-zinc-100 [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-xs [&_h1]:mt-4 [&_h1]:text-xl [&_h1]:font-semibold [&_h2]:mt-3 [&_h2]:text-lg [&_h2]:font-medium [&_li]:my-1 [&_p]:my-2 [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5 dark:[&_code]:bg-zinc-800">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{summary}</ReactMarkdown>
+          {streaming ? (
+            <span className="inline-block h-3 w-1.5 animate-pulse bg-zinc-700 align-middle dark:bg-zinc-300" />
+          ) : null}
+        </div>
+      ) : streaming ? (
+        <p className="text-sm text-zinc-500">生成总结中…</p>
+      ) : null}
+
+      {risks.length > 0 ? (
         <div className="mt-5 border-t border-zinc-200 pt-4 dark:border-zinc-800">
-          <RiskList risks={result.risks} />
+          <RiskList risks={risks} />
         </div>
       ) : null}
     </article>
