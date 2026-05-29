@@ -78,8 +78,8 @@ func TestSQLiteStore_Put_SameSHAPreservesID(t *testing.T) {
 
 	// 同 (owner, repo, pr, sha) 二次写入：ID 复用，payload + created_at 刷新
 	in2 := &Record{
-		ID:       NewID(), // 新生成的 ID 应被 ON CONFLICT 忽略
-		Owner:    in1.Owner, Repo: in1.Repo, PRNumber: in1.PRNumber, HeadSHA: in1.HeadSHA,
+		ID:    NewID(), // 新生成的 ID 应被 ON CONFLICT 忽略
+		Owner: in1.Owner, Repo: in1.Repo, PRNumber: in1.PRNumber, HeadSHA: in1.HeadSHA,
 		Payload: json.RawMessage(`{"summary":"updated"}`),
 	}
 	if err := s.Put(ctx, in2); err != nil {
@@ -142,24 +142,61 @@ func TestSQLiteStore_List_FiltersByUserID(t *testing.T) {
 	ctx := context.Background()
 
 	alice := "alice"
-	pubRec := sampleRecord("sha-pub")
+	pubRec := sampleRecord("sha-shared")
 	if err := s.Put(ctx, pubRec); err != nil {
 		t.Fatalf("Put pub: %v", err)
 	}
-	userRec := sampleRecord("sha-user")
-	userRec.PRNumber = 43
+	userRec := sampleRecord("sha-shared")
 	userRec.UserID = &alice
 	if err := s.Put(ctx, userRec); err != nil {
 		t.Fatalf("Put user: %v", err)
 	}
 
 	pubList, _ := s.List(ctx, nil, 10)
-	if len(pubList) != 1 || pubList[0].HeadSHA != "sha-pub" {
+	if len(pubList) != 1 || pubList[0].ID != pubRec.ID {
 		t.Errorf("user_id=nil 应只返公共记录，得到 %+v", pubList)
 	}
 	aliceList, _ := s.List(ctx, &alice, 10)
-	if len(aliceList) != 1 || aliceList[0].HeadSHA != "sha-user" {
+	if len(aliceList) != 1 || aliceList[0].ID != userRec.ID {
 		t.Errorf("user_id=alice 应只返 alice 的记录，得到 %+v", aliceList)
+	}
+
+	got, err := s.Get(ctx, pubRec.Owner, pubRec.Repo, pubRec.PRNumber, pubRec.HeadSHA)
+	if err != nil {
+		t.Fatalf("Get public: %v", err)
+	}
+	if got == nil || got.ID != pubRec.ID {
+		t.Errorf("Get 应命中公共记录，得到 %+v", got)
+	}
+}
+
+func TestSQLiteStore_List_SameTimestampUsesStableTieBreaker(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	ts := time.Unix(2000, 0)
+	first := sampleRecord("sha-first")
+	first.CreatedAt = ts
+	if err := s.Put(ctx, first); err != nil {
+		t.Fatalf("Put first: %v", err)
+	}
+
+	second := sampleRecord("sha-second")
+	second.PRNumber = 43
+	second.CreatedAt = ts
+	if err := s.Put(ctx, second); err != nil {
+		t.Fatalf("Put second: %v", err)
+	}
+
+	got, err := s.List(ctx, nil, 10)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("List 应返 2 条，得到 %d", len(got))
+	}
+	if got[0].HeadSHA != "sha-second" {
+		t.Errorf("同时间戳时后写入记录应排首位，得到 %s", got[0].HeadSHA)
 	}
 }
 

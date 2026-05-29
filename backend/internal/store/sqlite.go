@@ -20,11 +20,15 @@ type SQLiteStore struct {
 }
 
 // NewSQLiteStore 打开或创建数据库，应用 schema（CREATE IF NOT EXISTS 幂等），再返回。
-// path 传 ":memory:" 即可获得纯内存库（测试用）。
+// path 传 ":memory:" 即可获得纯内存库（测试用）；该 DSN 需固定单连接避免 schema 丢失。
 func NewSQLiteStore(path string) (*SQLiteStore, error) {
 	db, err := sql.Open("sqlite3", path)
 	if err != nil {
 		return nil, err
+	}
+	if path == ":memory:" {
+		db.SetMaxOpenConns(1)
+		db.SetMaxIdleConns(1)
 	}
 	if err := db.PingContext(context.Background()); err != nil {
 		_ = db.Close()
@@ -44,7 +48,7 @@ func (s *SQLiteStore) Close() error { return s.db.Close() }
 func (s *SQLiteStore) Get(ctx context.Context, owner, repo string, pr int, headSHA string) (*Record, error) {
 	const q = `SELECT id, user_id, owner, repo, pr_number, head_sha, payload, created_at
 	           FROM reviews
-	           WHERE owner = ? AND repo = ? AND pr_number = ? AND head_sha = ?
+	           WHERE owner = ? AND repo = ? AND pr_number = ? AND head_sha = ? AND user_id IS NULL
 	           LIMIT 1`
 	row := s.db.QueryRowContext(ctx, q, owner, repo, pr, headSHA)
 	return scanRecord(row)
@@ -66,14 +70,26 @@ func (s *SQLiteStore) Put(ctx context.Context, r *Record) error {
 		return errors.New("Record.ID is empty; generate with store.NewID() first")
 	}
 	if r.CreatedAt.IsZero() {
-		r.CreatedAt = time.Now()
+		r.CreatedAt = time.Now().UTC()
+	} else {
+		r.CreatedAt = r.CreatedAt.UTC()
 	}
-	const q = `INSERT INTO reviews (id, user_id, owner, repo, pr_number, head_sha, payload, created_at)
+	const (
+		qPublic = `INSERT INTO reviews (id, user_id, owner, repo, pr_number, head_sha, payload, created_at)
 	           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	           ON CONFLICT(owner, repo, pr_number, head_sha)
+	           ON CONFLICT(owner, repo, pr_number, head_sha) WHERE user_id IS NULL
 	           DO UPDATE SET payload = excluded.payload, created_at = excluded.created_at`
+		qUser = `INSERT INTO reviews (id, user_id, owner, repo, pr_number, head_sha, payload, created_at)
+	           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	           ON CONFLICT(user_id, owner, repo, pr_number, head_sha) WHERE user_id IS NOT NULL
+	           DO UPDATE SET payload = excluded.payload, created_at = excluded.created_at`
+	)
+	q := qPublic
+	if r.UserID != nil {
+		q = qUser
+	}
 	_, err := s.db.ExecContext(ctx, q,
-		r.ID, r.UserID, r.Owner, r.Repo, r.PRNumber, r.HeadSHA, []byte(r.Payload), r.CreatedAt.Unix(),
+		r.ID, r.UserID, r.Owner, r.Repo, r.PRNumber, r.HeadSHA, []byte(r.Payload), r.CreatedAt.UnixNano(),
 	)
 	return err
 }
@@ -85,10 +101,10 @@ func (s *SQLiteStore) List(ctx context.Context, userID *string, limit int) ([]*R
 		limit = 50
 	}
 	const (
-		qAll  = `SELECT id, user_id, owner, repo, pr_number, head_sha, payload, created_at
-		         FROM reviews WHERE user_id IS NULL ORDER BY created_at DESC LIMIT ?`
+		qAll = `SELECT id, user_id, owner, repo, pr_number, head_sha, payload, created_at
+		         FROM reviews WHERE user_id IS NULL ORDER BY created_at DESC, rowid DESC LIMIT ?`
 		qUser = `SELECT id, user_id, owner, repo, pr_number, head_sha, payload, created_at
-		         FROM reviews WHERE user_id = ? ORDER BY created_at DESC LIMIT ?`
+		         FROM reviews WHERE user_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?`
 	)
 	var (
 		rows *sql.Rows
@@ -135,7 +151,7 @@ func scanRecord(row *sql.Row) (*Record, error) {
 		r.UserID = &s
 	}
 	r.Payload = payload
-	r.CreatedAt = time.Unix(ts, 0)
+	r.CreatedAt = time.Unix(0, ts).UTC()
 	return &r, nil
 }
 
@@ -155,6 +171,6 @@ func scanRecordRows(rows *sql.Rows) (*Record, error) {
 		r.UserID = &s
 	}
 	r.Payload = payload
-	r.CreatedAt = time.Unix(ts, 0)
+	r.CreatedAt = time.Unix(0, ts).UTC()
 	return &r, nil
 }
