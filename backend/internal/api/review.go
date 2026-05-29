@@ -96,7 +96,6 @@ func PostReview(d Deps) gin.HandlerFunc {
 					return
 				}
 			}
-			}
 		}
 
 		builder := d.Builder
