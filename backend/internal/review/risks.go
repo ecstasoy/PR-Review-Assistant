@@ -69,7 +69,7 @@ func (s RisksStage) Run(ctx context.Context, c prctx.Context, p llm.Provider) (<
 
 		// 解析 JSON {"risks":[...]}
 		var parsed struct {
-			Risks []Risk `json:"risks"`
+			Risks *[]Risk `json:"risks"`
 		}
 		if err := json.Unmarshal([]byte(raw.String()), &parsed); err != nil {
 			emit(events, "error", map[string]string{
@@ -78,11 +78,18 @@ func (s RisksStage) Run(ctx context.Context, c prctx.Context, p llm.Provider) (<
 			})
 			return
 		}
+		if parsed.Risks == nil {
+			emit(events, "error", map[string]string{
+				"stage":   "risks",
+				"message": "parse risks JSON: missing risks array",
+			})
+			return
+		}
 
 		select {
 		case <-ctx.Done():
 			return
-		case events <- buildEvent("risks_done", parsed.Risks):
+		case events <- buildEvent("risks_done", *parsed.Risks):
 		}
 		emit(events, "done", map[string]string{"stage": "risks"})
 	}()
