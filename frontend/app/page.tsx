@@ -29,6 +29,8 @@ export default function HomePage() {
   const [risks, setRisks] = useState<Risk[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [stageErrors, setStageErrors] = useState<StageErrors>({});
+  const [risksReceived, setRisksReceived] = useState(false);
+  const [suggestionsReceived, setSuggestionsReceived] = useState(false);
 
   async function start(target: string) {
     setSubmitted(true);
@@ -39,13 +41,15 @@ export default function HomePage() {
     setRisks([]);
     setSuggestions([]);
     setStageErrors({});
+    setRisksReceived(false);
+    setSuggestionsReceived(false);
     setStreaming(true);
     try {
       await streamReview(target, {
         onPr: setPr,
         onSummaryDelta: (delta) => setSummary((s) => s + delta),
-        onRisksDone: setRisks,
-        onSuggestionsDone: setSuggestions,
+        onRisksDone: (r) => { setRisks(r); setRisksReceived(true); },
+        onSuggestionsDone: (s) => { setSuggestions(s); setSuggestionsReceived(true); },
         onInfo: setInfo,
         onStageError: (stage, msg) =>
           setStageErrors((prev) => ({ ...prev, [stage]: msg })),
@@ -79,6 +83,8 @@ export default function HomePage() {
           info={info}
           stageErrors={stageErrors}
           streaming={streaming}
+          risksReceived={risksReceived}
+          suggestionsReceived={suggestionsReceived}
         />
       )}
     </section>
@@ -93,6 +99,8 @@ interface ResultsPanelProps {
   info: string | null;
   stageErrors: StageErrors;
   streaming: boolean;
+  risksReceived: boolean;
+  suggestionsReceived: boolean;
 }
 
 // ResultsPanel 占位实现：summary 流式 markdown + RiskList + SuggestionList。
@@ -105,6 +113,8 @@ function ResultsPanel({
   info,
   stageErrors,
   streaming,
+  risksReceived,
+  suggestionsReceived,
 }: ResultsPanelProps) {
   if (info) {
     return (
@@ -154,11 +164,13 @@ function ResultsPanel({
         risks={risks}
         streaming={streaming}
         error={stageErrors.risks}
+        risksReceived={risksReceived}
       />
       <SuggestionsSection
         suggestions={suggestions}
         streaming={streaming}
         error={stageErrors.suggestions}
+        suggestionsReceived={suggestionsReceived}
       />
     </article>
   );
@@ -192,13 +204,16 @@ function RisksSection({
   risks,
   streaming,
   error,
+  risksReceived,
 }: {
   risks: Risk[];
   streaming: boolean;
   error: string | undefined;
+  risksReceived: boolean;
 }) {
   if (error) return <StageErrorBanner stage="风险" message={error} />;
   if (risks.length > 0) return <RiskList risks={risks} />;
+  if (risksReceived) return <p className="text-sm text-muted">未发现风险。</p>;
   if (streaming) return <p className="text-sm text-faint">扫描风险中…</p>;
   return null;
 }
@@ -207,13 +222,16 @@ function SuggestionsSection({
   suggestions,
   streaming,
   error,
+  suggestionsReceived,
 }: {
   suggestions: Suggestion[];
   streaming: boolean;
   error: string | undefined;
+  suggestionsReceived: boolean;
 }) {
   if (error) return <StageErrorBanner stage="建议" message={error} />;
   if (suggestions.length > 0) return <SuggestionList suggestions={suggestions} />;
+  if (suggestionsReceived) return <p className="text-sm text-muted">无建议。</p>;
   if (streaming) return <p className="text-sm text-faint">生成建议中…</p>;
   return null;
 }

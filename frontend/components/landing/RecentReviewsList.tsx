@@ -91,7 +91,7 @@ function RecentRow({ item, isFirst }: { item: SummaryWithCounts; isFirst: boolea
         isFirst ? "" : "border-t border-border"
       }`}
     >
-      <CIStatus status={item.ci ?? "pending"} />
+      <CIStatus status={item.ci || "pending"} />
       <code className="shrink-0 font-mono text-xs text-text-2">
         {item.owner}/{item.repo}#{item.pr}
       </code>

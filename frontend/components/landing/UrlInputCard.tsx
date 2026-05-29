@@ -23,8 +23,8 @@ const EXAMPLES = [
   },
 ] as const;
 
-// 校验 PR URL 形状（owner/repo/pull/编号），允许 /files 后缀和末尾斜杠
-const PR_URL_REGEX = /github\.com\/[^/]+\/[^/]+\/pull\/\d+/;
+// 校验 PR URL 形状（协议起头，owner/repo/pull/正整数编号），允许 /files 后缀和末尾斜杠
+const PR_URL_REGEX = /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/[1-9]\d*(?:\/[^\s]*)?$/;
 
 export function isValidPrUrl(url: string): boolean {
   return PR_URL_REGEX.test(url.trim());
@@ -57,6 +57,8 @@ export function UrlInputCard({ value, onChange, onSubmit, disabled }: Props) {
             value={value}
             onChange={(e) => onChange(e.target.value)}
             placeholder="https://github.com/owner/repo/pull/123"
+            aria-label="GitHub Pull Request URL"
+            aria-invalid={value.trim() !== "" && !valid}
             spellCheck={false}
             disabled={disabled}
             className="min-w-0 flex-1 border-none bg-transparent px-0.5 py-1.5 font-mono text-sm text-text outline-none placeholder:text-faint disabled:opacity-60"
