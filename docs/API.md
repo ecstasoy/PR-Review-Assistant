@@ -68,7 +68,7 @@ Content-Type: application/json
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | `file` | string | 文件路径 |
-| `line` | int | 行号（可选，不确定时省略 → 0） |
+| `line` | int | 行号（可选；不确定时响应中省略） |
 | `severity` | string | `high` / `medium` / `low` |
 | `category` | string | `bug` / `security` / `perf` / `style` / `other` |
 | `confidence` | float | 0-1，LLM 自评把握度；前端 ≥ 0.9 默认展开 |
