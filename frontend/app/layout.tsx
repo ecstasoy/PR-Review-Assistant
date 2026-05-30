@@ -16,8 +16,23 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "PR Review Assistant",
-  description: "AI 辅助代码评审 — 粘贴 GitHub PR 链接即可。",
+  title: "LGTM — AI 辅助代码评审",
+  description: "粘贴任意 GitHub PR 链接，30 秒拿到结构化评审：变更总结 / 风险识别 / 行内建议。",
+  icons: {
+    icon: [
+      { url: "/brand/svg/favicon.svg", type: "image/svg+xml" },
+      { url: "/brand/png/favicon-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/brand/png/favicon-16.png", sizes: "16x16", type: "image/png" },
+    ],
+    apple: [{ url: "/brand/png/apple-touch-icon-180.png", sizes: "180x180" }],
+  },
+  manifest: "/manifest.webmanifest",
+  openGraph: {
+    title: "LGTM — AI 辅助代码评审",
+    description: "粘贴任意 GitHub PR 链接，30 秒拿到结构化评审。",
+    images: ["/brand/png/og-social.png"],
+    type: "website",
+  },
 };
 
 // 根布局只负责 html / body / 字体 / 主题脚本 / 全局 CSS。

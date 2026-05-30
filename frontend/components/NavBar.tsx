@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { History, Sparkle } from "lucide-react";
+import { History } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { BrandMark } from "./BrandMark";
 import { ThemeToggle } from "./theme-toggle";
 
-// NavBar 对齐 design 原型 TopBarSimple：
-// logo（accent 方块 + sparkle）→ ghost button 导航 → mock-provider pill → 主题切换
+// NavBar 顶栏：左侧 LGTM BrandMark（图标 + lgtm 字标 + 闪烁光标）→ ghost button 导航
+// → mock-provider pill → 主题切换。
 export function NavBar() {
   const pathname = usePathname();
   const isReview = pathname === "/" || pathname.startsWith("/review");
@@ -16,11 +17,8 @@ export function NavBar() {
 
   return (
     <header className="flex h-[52px] flex-shrink-0 items-center gap-3 border-b border-border bg-surface px-4">
-      <Link href="/" className="flex items-center gap-2">
-        <span className="inline-flex h-[26px] w-[26px] items-center justify-center rounded-md bg-accent text-accent-fg">
-          <Sparkle className="h-[15px] w-[15px]" strokeWidth={2.2} fill="currentColor" />
-        </span>
-        <span className="text-base font-semibold tracking-tight">PR Review</span>
+      <Link href="/" className="flex items-center" aria-label="LGTM 首页">
+        <BrandMark size={24} animate />
       </Link>
 
       <nav className="ml-2.5 flex items-center gap-0.5">

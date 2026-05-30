@@ -24,7 +24,7 @@ export function AgentPanel({ onClose }: Props) {
     {
       role: "assistant",
       text:
-        "我是 PR Review Agent。基于本次评审的 diff、风险与项目约定，可以继续追问任何代码细节、设计权衡或建议落地方式。",
+        "我是 LGTM Agent。基于本次评审的 diff、风险与项目约定，可以继续追问任何代码细节、设计权衡或建议落地方式。",
     },
   ]);
   const [input, setInput] = useState("");
