@@ -9,12 +9,14 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	sentrygin "github.com/getsentry/sentry-go/gin"
 	"github.com/joho/godotenv"
 
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/api"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/config"
 	gh "github.com/ecstasoy/PR-Review-Assistant/backend/internal/github"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/llm"
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/observability"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/prctx"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/store"
 )
@@ -34,11 +36,24 @@ func main() {
 	}
 
 	cfg := config.MustLoad()
+
+	// Sentry：DSN 非空时初始化；空时 cleanup 是 noop
+	sentryCleanup, _ := observability.InitSentry(observability.SentryConfig{
+		DSN:         cfg.SentryDSN,
+		Environment: cfg.Environment,
+	})
+	defer sentryCleanup()
+
 	deps := buildDeps(cfg)
 
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(gin.Logger())
+	// Sentry middleware：当 DSN 配置后自动捕 panic + 注入 hub 到 ctx
+	// DSN 空时 sentry.Init 没调用，本 middleware 等价 noop
+	if cfg.SentryDSN != "" {
+		r.Use(sentrygin.New(sentrygin.Options{Repanic: true}))
+	}
 
 	// 配置受信代理：用于 c.ClientIP() 正确解析 X-Forwarded-For。
 	// 未配置时显式禁用代理信任，退回 RemoteAddr 解析。
