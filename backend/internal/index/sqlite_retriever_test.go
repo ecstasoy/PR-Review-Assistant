@@ -108,6 +108,37 @@ func TestEncodeDecodeVec_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestSQLiteRetriever_PRNumberRoundTrip 验证 IndexerChunk.PRNumber 写入 + Retrieve 读回。
+// LLM prompt 依赖此字段显示「来自 PR #X」让 agent 能引用其他 PR 的代码。
+func TestSQLiteRetriever_PRNumberRoundTrip(t *testing.T) {
+	r := newRetrieverWithMock(t)
+	ctx := context.Background()
+	if err := r.UpsertMany(ctx, "o/r", []Chunk{
+		{Path: "a.go", Idx: 0, Content: "from PR 76", PRNumber: 76},
+		{Path: "b.go", Idx: 0, Content: "from PR 80", PRNumber: 80},
+		{Path: "c.go", Idx: 0, Content: "unknown origin"}, // PRNumber=0 测兼容
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	hits, err := r.Retrieve(ctx, "o/r", "from PR 76", 3)
+	if err != nil {
+		t.Fatalf("retrieve: %v", err)
+	}
+	byFile := map[string]Reference{}
+	for _, h := range hits {
+		byFile[h.File] = h
+	}
+	if byFile["a.go"].PRNumber != 76 {
+		t.Errorf("a.go PRNumber = %d, want 76", byFile["a.go"].PRNumber)
+	}
+	if byFile["b.go"].PRNumber != 80 {
+		t.Errorf("b.go PRNumber = %d, want 80", byFile["b.go"].PRNumber)
+	}
+	if byFile["c.go"].PRNumber != 0 {
+		t.Errorf("c.go PRNumber = %d, want 0 (unknown origin)", byFile["c.go"].PRNumber)
+	}
+}
+
 func TestNewSQLiteRetriever_RejectsNilEmbedder(t *testing.T) {
 	_, err := NewSQLiteRetriever(":memory:", nil)
 	if err == nil {

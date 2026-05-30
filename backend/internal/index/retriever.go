@@ -6,9 +6,10 @@ import "context"
 
 // Reference 一条检索到的代码片段，作为 L4 上下文注入 prompt。
 type Reference struct {
-	File    string // 源文件路径
-	Snippet string // 检索命中的代码 / 文档片段
-	Reason  string // 为什么命中（"defines X" / "calls Y" / "cosine=0.83"）
+	File     string // 源文件路径
+	Snippet  string // 检索命中的代码 / 文档片段
+	Reason   string // 为什么命中（"defines X" / "calls Y" / "cosine=0.83"）
+	PRNumber int    // 这条片段来自哪个 PR（0 = 未知 / 旧索引）；让 LLM 能说"PR #76 改过 X"
 }
 
 // Retriever 按 scope + query 召回最多 k 条 Reference。
@@ -26,9 +27,10 @@ type Embedder interface {
 // IndexerChunk 单个待索引文本片段；与 SQLiteRetriever.Chunk 同形状。
 // 抽到 interface 包让 Indexer 接口不依赖具体实现。
 type IndexerChunk struct {
-	Path    string
-	Idx     int    // 同 path 下的序号；切大文件用
-	Content string // 实际文本内容
+	Path     string
+	Idx      int    // 同 path 下的序号；切大文件用
+	Content  string // 实际文本内容
+	PRNumber int    // 该 chunk 来自哪个 PR；0 表示未指定（如离线全仓预索引）
 }
 
 // Indexer 把 chunks 写入索引；与 Retriever 解耦读写。

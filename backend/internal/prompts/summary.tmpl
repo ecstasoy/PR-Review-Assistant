@@ -10,7 +10,7 @@
 {{ with .L4References }}
 ## 相关代码（跨文件 RAG 检索）
 {{ range . -}}
-**{{ .File }}**（{{ .Reason }}）
+**{{ .File }}**（{{ if gt .PRNumber 0 }}来自 PR #{{ .PRNumber }} · {{ end }}{{ .Reason }}）
 ```
 {{ .Snippet }}
 ```

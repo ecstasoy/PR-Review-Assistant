@@ -67,6 +67,12 @@ func NewLayeredBuilder(opts ...Option) *LayeredBuilder {
 // 引入 L4 后整体比例约 3:4:1:2（与 design README §未来扩展 一致）；
 // Retriever=Noop 时 L4=0，等价回退到原 4:5:1。
 func (b *LayeredBuilder) Build(ctx context.Context, pr github.PullRequest) (Context, error) {
+	return b.BuildWith(ctx, pr, BuildOptions{})
+}
+
+// BuildWith 同 Build，但接受 opts；目前 opts.RAGQuery 覆盖 buildL4 的查询 string
+// 追问场景应该传 user 输入而非 L1Meta；让召回更对题
+func (b *LayeredBuilder) BuildWith(ctx context.Context, pr github.PullRequest, opts BuildOptions) (Context, error) {
 	if b.TokenLimit <= 0 {
 		return Context{}, fmt.Errorf("token limit must be positive: %d", b.TokenLimit)
 	}
@@ -98,9 +104,13 @@ func (b *LayeredBuilder) Build(ctx context.Context, pr github.PullRequest) (Cont
 	l3Tokens := estimateTokens(l3Str)
 
 	// L4：跨文件 RAG 检索；Retriever 非 Noop 时启用
-	// query 用 L1Meta（包含 PR 标题 / body / 文件名）作语义搜索锚点
+	// 默认 query 用 L1Meta（PR 元信息），opts.RAGQuery 非空时优先用（追问场景传 user 问题）
 	// scope = owner/repo 避免跨仓库串扰
-	l4Refs, l4Tokens := b.buildL4(ctx, pr, l1Str, l1Tokens, l3Tokens)
+	ragQuery := opts.RAGQuery
+	if ragQuery == "" {
+		ragQuery = l1Str
+	}
+	l4Refs, l4Tokens := b.buildL4(ctx, pr, ragQuery, l1Tokens, l3Tokens)
 
 	// L2 可用预算 = 总 - L1 - L3 - L4（严格不超出 TokenLimit）
 	l2Avail := b.TokenLimit - l1Tokens - l3Tokens - l4Tokens
@@ -128,10 +138,11 @@ func (b *LayeredBuilder) Build(ctx context.Context, pr github.PullRequest) (Cont
 
 // buildL4 调 Retriever 召回，按 L4 预算截断 References 数量 + 单条 snippet 字符。
 // 失败时返回 (nil, 0) + warn —— RAG 不可用时整个评审仍要能跑。
+// queryStr 默认 L1Meta；追问场景传 user 问题
 func (b *LayeredBuilder) buildL4(
 	ctx context.Context,
 	pr github.PullRequest,
-	l1Str string,
+	queryStr string,
 	l1Tokens, l3Tokens int,
 ) ([]index.Reference, int) {
 	if b.Retriever == nil {
@@ -156,8 +167,8 @@ func (b *LayeredBuilder) buildL4(
 	}
 
 	scope := pr.Owner + "/" + pr.Repo
-	// query 用 L1Meta 前 1K 字符（标题 + body 通常够 cosine 找到相关文件）
-	query := l1Str
+	// query 截前 1K 字符（无论是 L1Meta 还是 user 问题）；embedding API 对超长 input 也有 token 上限
+	query := queryStr
 	if len(query) > 1024 {
 		query = query[:1024]
 	}

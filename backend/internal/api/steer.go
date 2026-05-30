@@ -23,6 +23,32 @@ var allowedSteerStages = map[string]review.Stage{
 	"suggestions": review.SuggestionsStage{},
 }
 
+// buildAgentUserPrompt 把 prctx.Context 装到 agent 的 user prompt 里。
+// 与 stage 模板的核心差异：不要 JSON 输出指令；显式提示 L4 RAG 段是跨 PR 上下文。
+// L2 不内联（patch 体积大）—— agent 可调 read_file 按需取；这里只给 L1Meta（含文件名列表）和 L4 召回。
+func buildAgentUserPrompt(pr gh.PullRequest, userQuery string, pCtx prctx.Context) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "PR：%s/%s#%d（%s）\n\n", pr.Owner, pr.Repo, pr.Number, pr.Title)
+	fmt.Fprintf(&sb, "用户引导：%s\n\n", userQuery)
+	sb.WriteString("## PR 元信息\n")
+	sb.WriteString(pCtx.L1Meta)
+	if pCtx.L3Conventions != "" {
+		sb.WriteString("\n\n## 项目约定\n")
+		sb.WriteString(pCtx.L3Conventions)
+	}
+	if len(pCtx.L4References) > 0 {
+		sb.WriteString("\n\n## 相关代码（跨文件 RAG 召回；可能来自本 PR 或之前评过的同 repo PR）\n")
+		for _, r := range pCtx.L4References {
+			origin := r.Reason
+			if r.PRNumber > 0 {
+				origin = fmt.Sprintf("来自 PR #%d · %s", r.PRNumber, r.Reason)
+			}
+			fmt.Fprintf(&sb, "\n**%s**（%s）\n```\n%s\n```\n", r.File, origin, r.Snippet)
+		}
+	}
+	return sb.String()
+}
+
 // PostSteer POST /api/review/:id/steer
 //
 // 用户在会话视图底部 SteerComposer 输入引导（如 "重点看并发安全"），从 cached payload 重建 prctx，
@@ -114,7 +140,8 @@ func PostSteer(d Deps) gin.HandlerFunc {
 		if builder == nil {
 			builder = prctx.NewLayeredBuilder()
 		}
-		pCtx, err := builder.Build(ctx, pr)
+		// P2: 用用户输入作 RAG query，让追问 / steer 召回更对题（而非默认的 PR 元信息）
+		pCtx, err := builder.BuildWith(ctx, pr, prctx.BuildOptions{RAGQuery: text})
 		if err != nil {
 			slog.Error("steer build prctx", "err", err, "id", id)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "build context failed"})
@@ -149,9 +176,10 @@ func PostSteer(d Deps) gin.HandlerFunc {
 			WireAgentSSE(a, c.Writer)
 
 			sysPrompt := "你是 code reviewer agent。可调用 read_file / list_dir / grep_patches 三个工具深挖 PR 改动。" +
-				"分析时先想清楚要看哪些文件 / grep 什么模式，再调工具。最后用一段简洁中文文字总结你的发现（不要 JSON）。"
-			userPrompt := fmt.Sprintf("PR：%s/%s#%d（%s）\n\n用户引导：%s\n\n%s",
-				pr.Owner, pr.Repo, pr.Number, pr.Title, text, pCtx.L1Meta)
+				"分析时先想清楚要看哪些文件 / grep 什么模式，再调工具。" +
+				"prompt 末尾「相关代码」段是 RAG 召回的同 repo 内容（可能来自本 PR 或之前评过的同 repo PR），优先据此回答跨文件问题。" +
+				"最后用一段简洁中文文字总结你的发现（不要 JSON）。"
+			userPrompt := buildAgentUserPrompt(pr, text, pCtx)
 
 			result, err := a.Run(ctx, llm.Request{System: sysPrompt, User: userPrompt})
 			if err != nil {

@@ -47,6 +47,18 @@ func NewSQLiteRetriever(path string, embedder Embedder) (*SQLiteRetriever, error
 		_ = db.Close()
 		return nil, fmt.Errorf("retriever apply schema: %w", err)
 	}
+	// 兼容旧 DB：缺 pr_number 列时补加；新 DB 走 ALTER TABLE 也无副作用
+	var hasPRNumber int
+	if err := db.QueryRowContext(context.Background(), migrateAddPRNumber).Scan(&hasPRNumber); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("retriever sniff pr_number: %w", err)
+	}
+	if hasPRNumber == 0 {
+		if _, err := db.ExecContext(context.Background(), `ALTER TABLE chunks ADD COLUMN pr_number INTEGER NOT NULL DEFAULT 0`); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("retriever add pr_number column: %w", err)
+		}
+	}
 	return &SQLiteRetriever{db: db, embedder: embedder}, nil
 }
 
@@ -61,6 +73,12 @@ CREATE TABLE IF NOT EXISTS chunks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_chunks_scope ON chunks(scope);
+`
+
+// migrateSchema 兼容已存在的旧 DB（没 pr_number 列）；新装 DB 由上面 CREATE 建表后再加列同效果
+// SQLite 不支持 IF NOT EXISTS on ADD COLUMN，所以 sniff pragma_table_info 再决定
+const migrateAddPRNumber = `
+SELECT COUNT(*) FROM pragma_table_info('chunks') WHERE name='pr_number'
 `
 
 // Close 关闭底层 db。
@@ -94,10 +112,10 @@ func (r *SQLiteRetriever) UpsertMany(ctx context.Context, scope string, chunks [
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	const q = `INSERT INTO chunks (scope, path, idx, content, embedding)
-	           VALUES (?, ?, ?, ?, ?)
+	const q = `INSERT INTO chunks (scope, path, idx, content, embedding, pr_number)
+	           VALUES (?, ?, ?, ?, ?, ?)
 	           ON CONFLICT(scope, path, idx)
-	           DO UPDATE SET content = excluded.content, embedding = excluded.embedding`
+	           DO UPDATE SET content = excluded.content, embedding = excluded.embedding, pr_number = excluded.pr_number`
 	stmt, err := tx.PrepareContext(ctx, q)
 	if err != nil {
 		return err
@@ -106,7 +124,7 @@ func (r *SQLiteRetriever) UpsertMany(ctx context.Context, scope string, chunks [
 
 	for i, c := range chunks {
 		blob := encodeVec(vecs[i])
-		if _, err := stmt.ExecContext(ctx, scope, c.Path, c.Idx, c.Content, blob); err != nil {
+		if _, err := stmt.ExecContext(ctx, scope, c.Path, c.Idx, c.Content, blob, c.PRNumber); err != nil {
 			return fmt.Errorf("retriever upsert exec [%s:%d]: %w", c.Path, c.Idx, err)
 		}
 	}
@@ -131,7 +149,7 @@ func (r *SQLiteRetriever) Retrieve(ctx context.Context, scope, query string, k i
 	queryVec := qv[0]
 
 	// 全表 select 同 scope；万级以下 brute-force OK
-	const q = `SELECT path, idx, content, embedding FROM chunks WHERE scope = ?`
+	const q = `SELECT path, idx, content, embedding, pr_number FROM chunks WHERE scope = ?`
 	rows, err := r.db.QueryContext(ctx, q, scope)
 	if err != nil {
 		return nil, fmt.Errorf("retriever query: %w", err)
@@ -139,19 +157,20 @@ func (r *SQLiteRetriever) Retrieve(ctx context.Context, scope, query string, k i
 	defer rows.Close()
 
 	type scored struct {
-		path    string
-		idx     int
-		content string
-		score   float32
+		path     string
+		idx      int
+		content  string
+		prNumber int
+		score    float32
 	}
 	var hits []scored
 	for rows.Next() {
 		var (
 			path, content string
-			idx           int
+			idx, prNumber int
 			blob          []byte
 		)
-		if err := rows.Scan(&path, &idx, &content, &blob); err != nil {
+		if err := rows.Scan(&path, &idx, &content, &blob, &prNumber); err != nil {
 			return nil, err
 		}
 		vec, err := decodeVec(blob)
@@ -159,7 +178,7 @@ func (r *SQLiteRetriever) Retrieve(ctx context.Context, scope, query string, k i
 			continue // 跳过损坏 row
 		}
 		s := cosineSim(queryVec, vec)
-		hits = append(hits, scored{path, idx, content, s})
+		hits = append(hits, scored{path, idx, content, prNumber, s})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -171,9 +190,10 @@ func (r *SQLiteRetriever) Retrieve(ctx context.Context, scope, query string, k i
 	out := make([]Reference, 0, len(hits))
 	for _, h := range hits {
 		out = append(out, Reference{
-			File:    h.path,
-			Snippet: h.content,
-			Reason:  fmt.Sprintf("cosine=%.3f", h.score),
+			File:     h.path,
+			Snippet:  h.content,
+			Reason:   fmt.Sprintf("cosine=%.3f", h.score),
+			PRNumber: h.prNumber,
 		})
 	}
 	return out, nil
