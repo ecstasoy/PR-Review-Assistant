@@ -156,3 +156,95 @@ func TestOpenAIProvider_Stream_ContextCancel(t *testing.T) {
 		}
 	}
 }
+
+// stream tool_calls 跨多帧分片，验证按 index 累积并 emit Chunk{ToolCalls}
+func TestOpenAIProvider_Stream_ToolCalls_AccumulatedAcrossDeltas(t *testing.T) {
+	p := stubOpenAIServer(t, func(t *testing.T, w http.ResponseWriter, body []byte) {
+		var req openAIChatRequest
+		_ = json.Unmarshal(body, &req)
+		if len(req.Tools) != 1 || req.Tools[0].Function.Name != "read_file" {
+			t.Errorf("expected tools[0].function.name=read_file, got %+v", req.Tools)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		// 模拟 OpenAI 跨帧分片：第 1 帧建立 id/name + 部分 args，第 2 帧补 args 余下，第 3 帧 finish_reason
+		fmt.Fprint(w, sseLine(`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_abc","type":"function","function":{"name":"read_file","arguments":"{\"file\":"}}]}}]}`))
+		fmt.Fprint(w, sseLine(`{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"main.go\"}"}}]}}]}`))
+		fmt.Fprint(w, sseLine(`{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`))
+		fmt.Fprint(w, sseLine("[DONE]"))
+	})
+
+	schema := json.RawMessage(`{"type":"object"}`)
+	ch, err := p.Stream(context.Background(), Request{
+		User:  "evaluate this PR",
+		Tools: []ToolSpec{{Name: "read_file", Description: "read a file", Parameters: schema}},
+	})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	var (
+		gotCalls []ToolCall
+		sawDone  bool
+	)
+	for c := range ch {
+		if c.Err != nil {
+			t.Fatalf("chunk err: %v", c.Err)
+		}
+		if len(c.ToolCalls) > 0 {
+			gotCalls = c.ToolCalls
+		}
+		if c.Done {
+			sawDone = true
+		}
+	}
+	if !sawDone {
+		t.Fatal("没收到 Done")
+	}
+	if len(gotCalls) != 1 {
+		t.Fatalf("want 1 tool_call, got %d: %+v", len(gotCalls), gotCalls)
+	}
+	got := gotCalls[0]
+	if got.ID != "call_abc" || got.Name != "read_file" || got.Arguments != `{"file":"main.go"}` {
+		t.Errorf("tool call mismatch: %+v", got)
+	}
+}
+
+// Messages 多轮 + tool 角色回灌
+func TestOpenAIProvider_Stream_MessagesAndToolRoleRoundTrip(t *testing.T) {
+	p := stubOpenAIServer(t, func(t *testing.T, w http.ResponseWriter, body []byte) {
+		var req openAIChatRequest
+		if err := json.Unmarshal(body, &req); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		// 3 条消息：user / assistant(tool_calls) / tool(result)
+		if len(req.Messages) != 3 {
+			t.Fatalf("want 3 messages, got %d", len(req.Messages))
+		}
+		if req.Messages[1].Role != "assistant" || len(req.Messages[1].ToolCalls) != 1 {
+			t.Errorf("msg[1] should be assistant with tool_calls, got %+v", req.Messages[1])
+		}
+		if req.Messages[2].Role != "tool" || req.Messages[2].ToolCallID != "call_abc" {
+			t.Errorf("msg[2] should be tool with call_id, got %+v", req.Messages[2])
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, sseLine(`{"choices":[{"delta":{"content":"done"}}]}`))
+		fmt.Fprint(w, sseLine("[DONE]"))
+	})
+
+	ch, err := p.Stream(context.Background(), Request{
+		Messages: []Message{
+			{Role: "user", Content: "evaluate"},
+			{Role: "assistant", ToolCalls: []ToolCall{{ID: "call_abc", Name: "read_file", Arguments: `{"file":"main.go"}`}}},
+			{Role: "tool", ToolCallID: "call_abc", Name: "read_file", Content: "package main\n..."},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	var text strings.Builder
+	for c := range ch {
+		text.WriteString(c.Text)
+	}
+	if text.String() != "done" {
+		t.Errorf("final text=%q want done", text.String())
+	}
+}
