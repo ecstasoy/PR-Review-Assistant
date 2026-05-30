@@ -9,11 +9,17 @@ import {
   Sparkle,
   Wrench,
 } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { streamSteer } from "@/lib/sse";
 import { cn } from "@/lib/utils";
 import { Avatar } from "@/components/ui/avatar";
 import { Spinner } from "@/components/ui/spinner";
+
+// chatProse 聊天气泡内 markdown 排版：紧凑间距 + 小字号；与 SummaryCard 的宽松排版区分
+const chatProse =
+  "[&_p]:my-1.5 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_ul]:my-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:my-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_li]:my-0.5 [&_h1]:my-1.5 [&_h1]:text-sm [&_h1]:font-semibold [&_h2]:my-1.5 [&_h2]:text-[13px] [&_h2]:font-semibold [&_h3]:my-1.5 [&_h3]:text-xs [&_h3]:font-semibold [&_code]:rounded [&_code]:bg-surface [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[10.5px] [&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-surface [&_pre]:p-2 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_strong]:font-semibold";
 
 interface Props {
   onClose: () => void;
@@ -286,13 +292,17 @@ function AgentMessage({ msg }: { msg: Msg }) {
       <div className="max-w-[82%]">
         <div
           className={cn(
-            "whitespace-pre-wrap rounded-lg px-3 py-2 text-xs leading-[1.6]",
+            "rounded-lg px-3 py-2 text-xs leading-[1.6]",
             isUser
-              ? "bg-accent text-accent-fg"
-              : "border border-border bg-surface-2 text-text",
+              ? "whitespace-pre-wrap bg-accent text-accent-fg"
+              : cn("border border-border bg-surface-2 text-text", chatProse),
           )}
         >
-          {msg.text}
+          {isUser ? (
+            msg.text
+          ) : (
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.text}</ReactMarkdown>
+          )}
         </div>
         {msg.cites ? (
           <div className="mt-1.5 flex flex-wrap gap-1">
