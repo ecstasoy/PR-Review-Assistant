@@ -62,7 +62,7 @@ func RateLimit(cache store.Cache, cfg RateLimitConfig) gin.HandlerFunc {
 		})
 		return func(c *gin.Context) { c.Next() }
 	}
-	retryAfter := max(int(cfg.Window.Seconds()), 1)
+	retryAfter := max(int((cfg.Window+time.Second-1)/time.Second), 1)
 	return func(c *gin.Context) {
 		ip := c.ClientIP()
 		if ip == "" {
