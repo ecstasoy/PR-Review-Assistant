@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -171,23 +172,40 @@ func PostSteer(d Deps) gin.HandlerFunc {
 			a := &agent.Agent{
 				Provider: d.Provider,
 				Tools:    reg,
-				MaxSteps: 5,
+				MaxSteps: 8, // 5 过紧；L4 召回不直接命中时给 agent 2-3 次工具迭代余地
 			}
 			WireAgentSSE(a, c.Writer)
 
-			sysPrompt := "你是 code reviewer agent。可调用 read_file / list_dir / grep_patches 三个工具深挖 PR 改动。" +
-				"分析时先想清楚要看哪些文件 / grep 什么模式，再调工具。" +
-				"prompt 末尾「相关代码」段是 RAG 召回的同 repo 内容（可能来自本 PR 或之前评过的同 repo PR），优先据此回答跨文件问题。" +
-				"最后用一段简洁中文文字总结你的发现（不要 JSON）。"
+			// 强引导：L4 already has RAG context → 优先据此直答，避免无脑调工具空转
+			// 工具沙盒只让访问本 PR 改动文件，跨文件问题工具没用，必须靠 L4
+			sysPrompt := "你是 code reviewer agent。回答 PR 相关问题。\n\n" +
+				"## 关键：先看「相关代码」段\n" +
+				"prompt 末尾「## 相关代码（跨文件 RAG 召回）」段已是基于用户问题语义召回的本仓库相关代码（可能来自本 PR 也可能来自 main 上未在本 PR 改动的文件）。" +
+				"**如果该段已包含足以回答问题的内容，直接基于它给答案，不要调工具。**\n\n" +
+				"## 工具仅用于深挖本 PR 改动\n" +
+				"`read_file` / `list_dir` / `grep_patches` 只能访问**本 PR 的改动文件**。" +
+				"跨文件 / main 分支已有代码请用「相关代码」段，不要试图用工具访问（会被沙盒拒绝）。\n\n" +
+				"## 输出\n" +
+				"用一段简洁中文文字回答（不要 JSON）。优先引用「相关代码」中具体文件路径 + 行为，让读者能直接定位。"
 			userPrompt := buildAgentUserPrompt(pr, text, pCtx)
 
 			result, err := a.Run(ctx, llm.Request{System: sysPrompt, User: userPrompt})
 			if err != nil {
 				slog.Warn("steer agent run failed", "err", err, "steps", result.Steps)
-				writeSSE(c.Writer, "error", map[string]string{
-					"stage":   "agent",
-					"message": err.Error(),
-				})
+				// 仅当 agent 没产出任何文字时才推 error；有 Output 时下面 info 帧已能传达
+				// 让用户看到具体提示而非 "agent: max steps reached" 这种空话
+				if result.Output == "" {
+					hint := err.Error()
+					if errors.Is(err, agent.ErrMaxStepsReached) {
+						hint = fmt.Sprintf("Agent 用尽 %d 步仍未给出答案。"+
+							"可能是工具反复访问本 PR 没改的文件。"+
+							"试着把问题问得更具体（含文件名 / 函数名），或让我（agent）先看「相关代码」段。", result.Steps)
+					}
+					writeSSE(c.Writer, "error", map[string]string{
+						"stage":   "agent",
+						"message": hint,
+					})
+				}
 			}
 			// 把 agent 最终输出作 info 帧推给前端（v1 简化：不试图 parse 成 risks/suggestions JSON）
 			if result.Output != "" {
