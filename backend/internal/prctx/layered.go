@@ -24,8 +24,12 @@ const (
 	defaultRAGTopK = 4
 
 	// defaultRAGScoreThreshold cosine 相似度阈值；< 阈值的召回直接丢
-	// 经验：text-embedding-3-small 对相关代码段 cosine 通常 ≥ 0.5；< 0.5 是噪音
-	defaultRAGScoreThreshold = 0.5
+	// 经验校准（text-embedding-3-small）：
+	//   - 跨中英语义匹配（中文 query vs 英文代码+中文注释）通常落在 0.35-0.50
+	//   - 同语言（query 含目标 token）一般 0.50+
+	// 初版 0.5 过严：实测 query="Indexer 接口在哪定义？" → retriever.go cosine=0.463 被错杀
+	// 调到 0.35 配合 top-K=4 + L2 path 去重，足够过滤无关召回又不误伤跨语言匹配
+	defaultRAGScoreThreshold = 0.35
 )
 
 // LayeredBuilder 实现 Builder，按 L1:L2:L3 = 4:5:1 分配 token 预算，
