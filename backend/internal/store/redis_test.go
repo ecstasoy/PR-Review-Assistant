@@ -110,9 +110,16 @@ func TestRedisCache_Incr_TTL(t *testing.T) {
 func TestRedisCache_Delete(t *testing.T) {
 	c := redisTestCache(t)
 	ctx := context.Background()
-	_ = c.Set(ctx, "k", []byte("v"), 0)
-	_ = c.Delete(ctx, "k")
-	_, ok, _ := c.Get(ctx, "k")
+	if err := c.Set(ctx, "k", []byte("v"), 0); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if err := c.Delete(ctx, "k"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	_, ok, err := c.Get(ctx, "k")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
 	if ok {
 		t.Errorf("delete failed: still ok")
 	}
