@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"math"
 	"net/http"
 	"strconv"
 	"sync"
@@ -37,12 +38,20 @@ var (
 //   - ClientIP 走 gin 的解析：优先 X-Forwarded-For 链中的客户端 IP，
 //     必须配合反代正确设 trusted proxies；裸跑时取 RemoteAddr
 func RateLimit(cfg RateLimitConfig) gin.HandlerFunc {
+	if cfg.RPS <= 0 {
+		panic("RateLimit: RPS must be > 0")
+	}
 	var limiters sync.Map // map[string]*rate.Limiter
 	return func(c *gin.Context) {
 		ip := c.ClientIP()
 		l := getLimiter(&limiters, ip, cfg)
-		if !l.Allow() {
-			retryAfter := int(1.0/cfg.RPS) + 1
+		r := l.Reserve()
+		if delay := r.Delay(); delay > 0 {
+			r.Cancel()
+			retryAfter := int(math.Ceil(delay.Seconds()))
+			if retryAfter < 1 {
+				retryAfter = 1
+			}
 			c.Header("Retry-After", strconv.Itoa(retryAfter))
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
 				"error":       "请求过于频繁，请稍后再试",

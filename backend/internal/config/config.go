@@ -21,6 +21,11 @@ type Config struct {
 	LLMModel      string `env:"LLM_MODEL" envDefault:"deepseek-chat"`
 
 	SQLitePath string `env:"SQLITE_PATH" envDefault:"./data/reviews.db"`
+
+	// TrustedProxies 信任的反代 IP/CIDR 列表（逗号分隔）；
+	// 用于 c.ClientIP() 正确解析 X-Forwarded-For。
+	// 空字符串（默认）表示不信任任何代理，直接取 RemoteAddr。
+	TrustedProxies string `env:"TRUSTED_PROXIES" envDefault:""`
 }
 
 // MustLoad 解析环境变量；失败则打印错误并退出进程。

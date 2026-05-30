@@ -24,12 +24,20 @@ func TestRateLimit_AllowsBurstThenBlocks(t *testing.T) {
 
 	// 同一 IP 先打两个，应放行；第三个应 429
 	for i := range 2 {
-		res, _ := http.Get(srv.URL + "/x")
+		res, err := http.Get(srv.URL + "/x")
+		if err != nil {
+			t.Fatalf("http.Get failed: %v", err)
+		}
+		res.Body.Close()
 		if res.StatusCode != 200 {
 			t.Fatalf("burst #%d should pass, got %d", i, res.StatusCode)
 		}
 	}
-	res, _ := http.Get(srv.URL + "/x")
+	res, err := http.Get(srv.URL + "/x")
+	if err != nil {
+		t.Fatalf("http.Get failed: %v", err)
+	}
+	defer res.Body.Close()
 	if res.StatusCode != 429 {
 		t.Errorf("after burst should be 429, got %d", res.StatusCode)
 	}
