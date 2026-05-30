@@ -25,7 +25,10 @@ func Register(r *gin.Engine, d Deps) {
 	g := r.Group("/api")
 	g.Use(middleware.AuthCtx())
 
+	// /health 留为 liveness 别名（向后兼容 v1/v2 配置）
 	g.GET("/health", Health)
+	g.GET("/health/live", Health)
+	g.GET("/health/ready", Readiness(d))
 	g.POST("/review", PostReview(d))
 	g.GET("/reviews", ListReviews(d))
 	g.GET("/reviews/:id", GetReview(d))
