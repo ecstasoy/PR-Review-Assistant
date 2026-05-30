@@ -568,13 +568,17 @@ function SteerComposer({
     if (!v || !reviewId || inFlight) return;
     setInFlight(true);
     setError(null);
+    let stageFailed = false;
     try {
       await streamSteer(reviewId, v, stage, {
         onSteeredRisks: (r) => onSteeredRisks?.(r),
         onSteeredSuggestions: (s) => onSteeredSuggestions?.(s),
-        onStageError: (_s, msg) => setError(msg),
+        onStageError: (_s, msg) => {
+          stageFailed = true;
+          setError(msg);
+        },
       });
-      setText("");
+      if (!stageFailed) setText("");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
