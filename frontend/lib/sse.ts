@@ -11,6 +11,7 @@ export interface StreamCallbacks {
   onSuggestionsDone?: (suggestions: Suggestion[]) => void;
   onInfo?: (message: string) => void;
   onStageError?: (stage: string, message: string) => void;
+  onStageDone?: (stage: string) => void;
   onDone?: () => void;
 }
 
@@ -113,8 +114,14 @@ function dispatch(ev: ParsedFrame, cb: StreamCallbacks): void {
       cb.onStageError?.(p.stage ?? "?", p.message ?? "");
       break;
     }
-    case "done":
-      cb.onDone?.();
+    case "done": {
+      const p = parsed as { stage?: string };
+      if (p.stage) {
+        cb.onStageDone?.(p.stage);
+      } else {
+        cb.onDone?.();
+      }
       break;
+    }
   }
 }
