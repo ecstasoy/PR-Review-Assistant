@@ -55,6 +55,7 @@ function ReviewDetailPageContent({ id }: { id: string }) {
   const [risks, setRisks] = useState<Risk[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [files, setFiles] = useState<File[]>([]);
+  const [summaryDone, setSummaryDone] = useState(false);
   const [risksDone, setRisksDone] = useState(false);
   const [suggestionsDone, setSuggestionsDone] = useState(false);
   const [streaming, setStreaming] = useState(isStreaming);
@@ -74,13 +75,16 @@ function ReviewDetailPageContent({ id }: { id: string }) {
   // 拉数据：cached 模式 getReview；streaming 模式 streamReview
   useEffect(() => {
     let cancelled = false;
+    let controller: AbortController | null = null;
     if (isStreaming) {
       if (!sourceURL) {
         setError("缺少 url 参数");
         setLoaded(true);
         return;
       }
-      streamReview(decodeURIComponent(sourceURL), {
+      setSummaryDone(false);
+      controller = new AbortController();
+      streamReview(sourceURL, {
         onPr: (p) => !cancelled && (setPr(p), setLoaded(true)),
         onFiles: (f) => !cancelled && setFiles(f),
         onSummaryDelta: (d) => !cancelled && setSummary((s) => s + d),
@@ -95,12 +99,19 @@ function ReviewDetailPageContent({ id }: { id: string }) {
           setSuggestionsDone(true);
         },
         onInfo: (m) => !cancelled && setInfo(m),
-        onStageError: (stage, msg) =>
-          !cancelled &&
-          setStageErrors((prev) => ({ ...prev, [stage]: msg })),
-        onDone: () => !cancelled && setStreaming(false),
+        onStageError: (stage, msg) => {
+          if (cancelled) return;
+          if (stage === "summary") setSummaryDone(true);
+          setStageErrors((prev) => ({ ...prev, [stage]: msg }));
+        },
+        onStageDone: (stage) => {
+          if (cancelled || stage !== "summary") return;
+          setSummaryDone(true);
+        },
+        onDone: () => !cancelled && (setSummaryDone(true), setStreaming(false)),
       })
         .catch((e) => {
+          if (e instanceof DOMException && e.name === "AbortError") return;
           if (!cancelled) setError(e instanceof Error ? e.message : String(e));
         })
         .finally(() => {
@@ -120,6 +131,7 @@ function ReviewDetailPageContent({ id }: { id: string }) {
             setRisks,
             setSuggestions,
             setFiles,
+            setSummaryDone,
             setRisksDone,
             setSuggestionsDone,
             setStreaming,
@@ -135,6 +147,7 @@ function ReviewDetailPageContent({ id }: { id: string }) {
     }
     return () => {
       cancelled = true;
+      controller?.abort();
     };
   }, [id, isStreaming, sourceURL]);
 
@@ -150,11 +163,11 @@ function ReviewDetailPageContent({ id }: { id: string }) {
     }
     const hasSummary = summary.length > 0;
     return {
-      summary: hasSummary ? (risksDone ? "done" : "active") : "pending",
+      summary: summaryDone ? "done" : hasSummary ? "active" : "pending",
       risks: risksDone ? "done" : hasSummary ? "active" : "pending",
       suggestions: suggestionsDone ? "done" : risksDone ? "active" : "pending",
     };
-  }, [streaming, summary, risksDone, suggestionsDone]);
+  }, [streaming, summary, summaryDone, risksDone, suggestionsDone]);
 
   // scrollTop 直接赋值定位锚点 + 1.1s 闪烁高亮（design README §6 要求）
   const scrollToAnchor = useCallback((anchorId: string) => {
@@ -262,9 +275,13 @@ function ReviewDetailPageContent({ id }: { id: string }) {
             {stageErrors.context ? (
               <StageErrorBanner stage="上下文" message={stageErrors.context} />
             ) : null}
+            {stageErrors.suggestions ? (
+              <StageErrorBanner stage="建议" message={stageErrors.suggestions} />
+            ) : null}
             {view === "report" ? (
               <ReportContent
                 summary={summary}
+                summaryDone={summaryDone}
                 risks={risks}
                 risksDone={risksDone}
                 streaming={streaming}
@@ -295,6 +312,7 @@ interface HydrateSetters {
   setRisks: (r: Risk[]) => void;
   setSuggestions: (s: Suggestion[]) => void;
   setFiles: (f: File[]) => void;
+  setSummaryDone: (b: boolean) => void;
   setRisksDone: (b: boolean) => void;
   setSuggestionsDone: (b: boolean) => void;
   setStreaming: (b: boolean) => void;
@@ -325,6 +343,7 @@ function hydrateFromDetail(d: ReviewDetail, h: HydrateSetters) {
   h.setRisks(d.risks ?? []);
   h.setSuggestions(d.suggestions ?? []);
   h.setFiles(d.files ?? []);
+  h.setSummaryDone(true);
   h.setRisksDone(true);
   h.setSuggestionsDone(true);
   h.setStreaming(false);
@@ -332,12 +351,14 @@ function hydrateFromDetail(d: ReviewDetail, h: HydrateSetters) {
 
 function ReportContent({
   summary,
+  summaryDone,
   risks,
   risksDone,
   streaming,
   stageErrors,
 }: {
   summary: string;
+  summaryDone: boolean;
   risks: Risk[];
   risksDone: boolean;
   streaming: boolean;
@@ -348,7 +369,7 @@ function ReportContent({
       {stageErrors.summary ? (
         <StageErrorBanner stage="总结" message={stageErrors.summary} />
       ) : (
-        <SummaryCard summary={summary} streaming={streaming && !risksDone} />
+        <SummaryCard summary={summary} streaming={streaming && !summaryDone} />
       )}
       {stageErrors.risks ? (
         <StageErrorBanner stage="风险" message={stageErrors.risks} />

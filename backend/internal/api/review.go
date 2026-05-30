@@ -252,7 +252,13 @@ func forwardStage(ctx context.Context, c prctx.Context, p llm.Provider, s review
 	}
 	for ev := range events {
 		if ev.Type == "done" {
-			continue // per-stage done is suppressed; PostReview emits a single terminal done
+			var payload struct {
+				Stage string `json:"stage"`
+			}
+			_ = json.Unmarshal(ev.Data, &payload)
+			if payload.Stage != "summary" {
+				continue // risks/suggestions terminal done is suppressed; PostReview emits a single terminal done
+			}
 		}
 		select {
 		case <-ctx.Done():
