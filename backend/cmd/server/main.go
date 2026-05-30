@@ -118,10 +118,21 @@ func buildDeps(cfg config.Config) api.Deps {
 	} else {
 		deps.Store = openSQLiteFallback(cfg.SQLitePath)
 	}
-	// Cache：用于 rate limit 计数（middleware）+ 未来 SSE session 状态。
-	// v3 当 cfg.RedisURL 非空时切到 RedisCache 跨实例共享；目前固定走 MemoryCache
-	deps.Cache = store.NewMemoryCache(0)
-	slog.Info("cache ready", "type", "memory")
+	// Cache 二选一：REDIS_URL 非空走 RedisCache（v3 真部署跨实例共享），否则走 MemoryCache
+	// 失败时降级 MemoryCache + Error log，rate limit 仍单机计数不会挂
+	if cfg.RedisURL != "" {
+		if c, err := store.NewRedisCache(cfg.RedisURL); err != nil {
+			slog.Error("open redis cache failed; falling back to MemoryCache", "err", err)
+			deps.Cache = store.NewMemoryCache(0)
+			slog.Info("cache ready", "type", "memory")
+		} else {
+			deps.Cache = c
+			slog.Info("cache ready", "type", "redis")
+		}
+	} else {
+		deps.Cache = store.NewMemoryCache(0)
+		slog.Info("cache ready", "type", "memory")
+	}
 	return deps
 }
 
