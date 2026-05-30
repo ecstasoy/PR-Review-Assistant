@@ -108,6 +108,10 @@ func PostReview(d Deps) gin.HandlerFunc {
 		if len(pCtx.BudgetReport.Dropped) > 0 {
 			slog.Warn("prctx dropped large files", "files", pCtx.BudgetReport.Dropped, "limit", pCtx.BudgetReport.TokenLimit)
 		}
+		budget := toBudgetPayload(pCtx.BudgetReport)
+		// 在跑 LLM 前发预算帧，让前端会话视图可以立刻把上下文步骤切到"已完成"+显示真实 L1/L2/L3
+		writeSSE(c.Writer, "budget_report", budget)
+		c.Writer.Flush()
 		merged := mergeStages(ctx, pCtx, d.Provider)
 
 		// 边推流边收集供后续 cache 写入；stage 任一报错则不写缓存（避免缓存半残结果）
@@ -124,7 +128,7 @@ func PostReview(d Deps) gin.HandlerFunc {
 			case ev, ok := <-merged:
 				if !ok {
 					if d.Store != nil && !stageErrObserved && risksData != nil && suggestionsData != nil {
-						persistReview(d.Store, pr, summaryBuf.String(), risksData, suggestionsData)
+						persistReview(d.Store, pr, summaryBuf.String(), risksData, suggestionsData, budget)
 					}
 					writeSSERaw(w, "done", json.RawMessage(`{}`))
 					return false
@@ -147,6 +151,29 @@ func PostReview(d Deps) gin.HandlerFunc {
 				return true
 			}
 		})
+	}
+}
+
+// budgetReportPayload 三层 token 预算 SSE 帧 + 缓存 payload 共用形状。
+// 与 prctx.BudgetReport 同字段但带 snake_case json tag，避免把内部 pkg 字段名暴露给传输层。
+type budgetReportPayload struct {
+	TokenLimit int      `json:"token_limit"`
+	UsedL1     int      `json:"used_l1"`
+	UsedL2     int      `json:"used_l2"`
+	UsedL3     int      `json:"used_l3"`
+	UsedL4     int      `json:"used_l4,omitempty"`
+	Dropped    []string `json:"dropped,omitempty"`
+}
+
+// toBudgetPayload 把 prctx.BudgetReport 转成 API 形状；nil 安全。
+func toBudgetPayload(b prctx.BudgetReport) *budgetReportPayload {
+	return &budgetReportPayload{
+		TokenLimit: b.TokenLimit,
+		UsedL1:     b.UsedL1,
+		UsedL2:     b.UsedL2,
+		UsedL3:     b.UsedL3,
+		UsedL4:     b.UsedL4,
+		Dropped:    b.Dropped,
 	}
 }
 
@@ -179,24 +206,25 @@ func prMetaPayload(pr gh.PullRequest, sourceURL string) map[string]any {
 
 // persistReview 把本次评审序列化后写入 store；缓存写失败仅记日志，不影响响应。
 // 用 context.Background() 与请求生命周期解耦：写缓存时客户端可能已断开。
-func persistReview(s store.Store, pr gh.PullRequest, summary string, risks, suggestions json.RawMessage) {
+func persistReview(s store.Store, pr gh.PullRequest, summary string, risks, suggestions json.RawMessage, budget *budgetReportPayload) {
 	payload, err := json.Marshal(cachedPayload{
-		Title:       pr.Title,
-		Files:       pr.Files,
-		Author:      pr.Author,
-		AuthorRole:  pr.AuthorRole,
-		Lang:        detectPrimaryLang(pr.Files),
-		State:       pr.State,
-		Labels:      pr.Labels,
-		BaseRef:     pr.BaseRef,
-		HeadRef:     pr.HeadRef,
-		PRCreatedAt: pr.CreatedAt,
-		Stats:       pr.Stats,
-		CI:          pr.CI,
-		Checks:      pr.Checks,
-		Summary:     summary,
-		Risks:       risks,
-		Suggestions: suggestions,
+		Title:        pr.Title,
+		Files:        pr.Files,
+		Author:       pr.Author,
+		AuthorRole:   pr.AuthorRole,
+		Lang:         detectPrimaryLang(pr.Files),
+		State:        pr.State,
+		Labels:       pr.Labels,
+		BaseRef:      pr.BaseRef,
+		HeadRef:      pr.HeadRef,
+		PRCreatedAt:  pr.CreatedAt,
+		Stats:        pr.Stats,
+		CI:           pr.CI,
+		Checks:       pr.Checks,
+		Summary:      summary,
+		Risks:        risks,
+		Suggestions:  suggestions,
+		BudgetReport: budget,
 	})
 	if err != nil {
 		slog.Error("cache marshal", "err", err)

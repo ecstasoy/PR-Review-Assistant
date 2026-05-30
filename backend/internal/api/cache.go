@@ -33,6 +33,8 @@ type cachedPayload struct {
 	Summary     string          `json:"summary"`
 	Risks       json.RawMessage `json:"risks"`
 	Suggestions json.RawMessage `json:"suggestions"`
+	// BudgetReport 三层上下文 token 预算实际分配；指针 + omitempty 让旧缓存不带该字段时 JSON 干净
+	BudgetReport *budgetReportPayload `json:"budget_report,omitempty"`
 }
 
 // replayCached 把缓存内容按 SSE 协议依次写回；调用方负责事先已发首帧 pr meta。
@@ -49,6 +51,9 @@ func replayCached(w http.ResponseWriter, p cachedPayload) {
 	}
 	if len(p.Suggestions) > 0 {
 		writeSSERaw(w, "suggestions_done", p.Suggestions)
+	}
+	if p.BudgetReport != nil {
+		writeSSE(w, "budget_report", p.BudgetReport)
 	}
 	writeSSE(w, "done", map[string]any{})
 	if f, ok := w.(http.Flusher); ok {

@@ -52,10 +52,11 @@ type reviewDetail struct {
 	PRCreatedAt time.Time       `json:"pr_created_at,omitzero"`
 	Stats       gh.Stats        `json:"stats,omitzero"`
 	Checks      []gh.Check      `json:"checks,omitempty"`
-	Files       []gh.File       `json:"files,omitempty"` // 给 Diff 视图渲染用；list 端不返该大字段
-	Summary     string          `json:"summary"`
-	Risks       json.RawMessage `json:"risks,omitempty"`
-	Suggestions json.RawMessage `json:"suggestions,omitempty"`
+	Files        []gh.File            `json:"files,omitempty"` // 给 Diff 视图渲染用；list 端不返该大字段
+	Summary      string               `json:"summary"`
+	Risks        json.RawMessage      `json:"risks,omitempty"`
+	Suggestions  json.RawMessage      `json:"suggestions,omitempty"`
+	BudgetReport *budgetReportPayload `json:"budget_report,omitempty"`
 }
 
 // countRisksBySeverity 解析 risks_done event raw JSON，按 severity 分组计数。
@@ -160,19 +161,20 @@ func GetReview(d Deps) gin.HandlerFunc {
 				Lang:       p.Lang,
 				RiskCounts: countRisksBySeverity(p.Risks),
 			},
-			Files:       p.Files,
-			Author:      p.Author,
-			AuthorRole:  p.AuthorRole,
-			State:       p.State,
-			Labels:      p.Labels,
-			BaseRef:     p.BaseRef,
-			HeadRef:     p.HeadRef,
-			PRCreatedAt: p.PRCreatedAt,
-			Stats:       p.Stats,
-			Checks:      p.Checks,
-			Summary:     p.Summary,
-			Risks:       p.Risks,
-			Suggestions: p.Suggestions,
+			Files:        p.Files,
+			Author:       p.Author,
+			AuthorRole:   p.AuthorRole,
+			State:        p.State,
+			Labels:       p.Labels,
+			BaseRef:      p.BaseRef,
+			HeadRef:      p.HeadRef,
+			PRCreatedAt:  p.PRCreatedAt,
+			Stats:        p.Stats,
+			Checks:       p.Checks,
+			Summary:      p.Summary,
+			Risks:        p.Risks,
+			Suggestions:  p.Suggestions,
+			BudgetReport: p.BudgetReport,
 		})
 	}
 }

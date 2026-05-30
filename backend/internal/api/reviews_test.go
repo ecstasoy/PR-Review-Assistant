@@ -383,3 +383,54 @@ func TestCountRisksBySeverity(t *testing.T) {
 		}
 	}
 }
+
+// 验证：BudgetReport 字段在缓存 roundtrip 后从 /api/reviews/:id 完整透出，snake_case 与前端约定一致
+func TestGetReview_IncludesBudgetReport(t *testing.T) {
+	s := newTestStore(t)
+	id := store.NewID()
+	payload, _ := json.Marshal(cachedPayload{
+		Title:       "PR with budget",
+		Summary:     "s",
+		Risks:       json.RawMessage(`[]`),
+		Suggestions: json.RawMessage(`[]`),
+		BudgetReport: &budgetReportPayload{
+			TokenLimit: 16000,
+			UsedL1:     4200,
+			UsedL2:     8800,
+			UsedL3:     1500,
+			Dropped:    []string{"big/file.go"},
+		},
+	})
+	rec := &store.Record{
+		ID: id, Owner: "o", Repo: "r", PRNumber: 1, HeadSHA: "sha",
+		Payload: payload, CreatedAt: time.Unix(3000, 0),
+	}
+	if err := s.Put(context.Background(), rec); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+
+	srv := startTestServer(t, Deps{Provider: llm.NewMockProvider(), Store: s})
+	res, body := getJSON(t, srv, "/api/reviews/"+id)
+	if res.StatusCode != 200 {
+		t.Fatalf("status=%d body=%s", res.StatusCode, body)
+	}
+	// 字段名直接断言原始 JSON，避免 reviewDetail 改 tag 时漏覆盖
+	for _, want := range []string{
+		`"budget_report":`, `"token_limit":16000`, `"used_l1":4200`,
+		`"used_l2":8800`, `"used_l3":1500`, `"dropped":["big/file.go"]`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %s\nbody=%s", want, body)
+		}
+	}
+
+	// 旧缓存（无 budget）应保持向后兼容：detail 不带 budget_report 字段
+	idOld := seedReview(t, s, "old", "r", 2, "sha2", "no budget", time.Unix(4000, 0))
+	res2, body2 := getJSON(t, srv, "/api/reviews/"+idOld)
+	if res2.StatusCode != 200 {
+		t.Fatalf("old status=%d body=%s", res2.StatusCode, body2)
+	}
+	if strings.Contains(body2, `"budget_report"`) {
+		t.Errorf("old payload should not surface budget_report, got %s", body2)
+	}
+}
