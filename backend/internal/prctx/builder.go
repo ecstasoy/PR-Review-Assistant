@@ -3,6 +3,8 @@
 package prctx
 
 import (
+	"context"
+
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/github"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/index"
 )
@@ -25,6 +27,7 @@ type FileContext struct {
 
 // Builder 把 PullRequest 转成 Context。
 // 实现侧构造时接收 github.Fetcher 和 index.Retriever（v1 注入 NoopRetriever）。
+// ctx 用于传递取消信号；RAG retriever / embedder 走外部 API 时必须能被请求 ctx 取消。
 type Builder interface {
-	Build(pr github.PullRequest) (Context, error)
+	Build(ctx context.Context, pr github.PullRequest) (Context, error)
 }

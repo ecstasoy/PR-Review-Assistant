@@ -104,7 +104,8 @@ func buildDeps(cfg config.Config) api.Deps {
 	deps := api.Deps{
 		Fetcher:  gh.NewRealFetcher(cfg.GithubToken),
 		Provider: provider,
-		Builder:  prctx.NewLayeredBuilder(),
+		// Builder 先占位 NewLayeredBuilder()，等下面构造完 retriever 后再用 WithRetriever 替换
+		Builder: prctx.NewLayeredBuilder(),
 	}
 	// Store 二选一：POSTGRES_URL 非空走 PostgresStore，否则走 SQLite
 	// 失败时仅 warn，handler 已 nil-safe；缓存 + 历史功能降级停用而非整个服务挂
@@ -154,6 +155,8 @@ func buildDeps(cfg config.Config) api.Deps {
 		deps.Retriever = index.NoopRetriever{}
 		slog.Info("retriever ready", "type", "noop")
 	}
+	// 重新构造 Builder 注入 Retriever；prctx.LayeredBuilder.buildL4 用它召回 RAG references
+	deps.Builder = prctx.NewLayeredBuilder(prctx.WithRetriever(deps.Retriever))
 	return deps
 }
 
