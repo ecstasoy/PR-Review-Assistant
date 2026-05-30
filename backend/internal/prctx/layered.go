@@ -22,6 +22,10 @@ const (
 
 	// defaultRAGTopK 默认召回数；v3 调参可调
 	defaultRAGTopK = 4
+
+	// defaultRAGScoreThreshold cosine 相似度阈值；< 阈值的召回直接丢
+	// 经验：text-embedding-3-small 对相关代码段 cosine 通常 ≥ 0.5；< 0.5 是噪音
+	defaultRAGScoreThreshold = 0.5
 )
 
 // LayeredBuilder 实现 Builder，按 L1:L2:L3 = 4:5:1 分配 token 预算，
@@ -110,7 +114,12 @@ func (b *LayeredBuilder) BuildWith(ctx context.Context, pr github.PullRequest, o
 	if ragQuery == "" {
 		ragQuery = l1Str
 	}
-	l4Refs, l4Tokens := b.buildL4(ctx, pr, ragQuery, l1Tokens, l3Tokens)
+	// L2/L4 path 去重：本 PR 的 file paths 喂给 L4 让它跳过；避免 L4 重复 L2 已有内容
+	prFilePaths := make(map[string]bool, len(pr.Files))
+	for _, f := range pr.Files {
+		prFilePaths[f.Path] = true
+	}
+	l4Refs, l4Tokens := b.buildL4(ctx, pr, ragQuery, l1Tokens, l3Tokens, prFilePaths)
 
 	// L2 可用预算 = 总 - L1 - L3 - L4（严格不超出 TokenLimit）
 	l2Avail := b.TokenLimit - l1Tokens - l3Tokens - l4Tokens
@@ -139,11 +148,13 @@ func (b *LayeredBuilder) BuildWith(ctx context.Context, pr github.PullRequest, o
 // buildL4 调 Retriever 召回，按 L4 预算截断 References 数量 + 单条 snippet 字符。
 // 失败时返回 (nil, 0) + warn —— RAG 不可用时整个评审仍要能跑。
 // queryStr 默认 L1Meta；追问场景传 user 问题
+// skipPaths 本 PR 已在 L2 出现的 path 集合，召回时跳过避免与 L2 重复
 func (b *LayeredBuilder) buildL4(
 	ctx context.Context,
 	pr github.PullRequest,
 	queryStr string,
 	l1Tokens, l3Tokens int,
+	skipPaths map[string]bool,
 ) ([]index.Reference, int) {
 	if b.Retriever == nil {
 		return nil, 0
@@ -172,7 +183,8 @@ func (b *LayeredBuilder) buildL4(
 	if len(query) > 1024 {
 		query = query[:1024]
 	}
-	refs, err := b.Retriever.Retrieve(ctx, scope, query, defaultRAGTopK)
+	// 多召一些备用：阈值过滤 + L2 去重后可能剩不到 K 条
+	refs, err := b.Retriever.Retrieve(ctx, scope, query, defaultRAGTopK*3)
 	if err != nil {
 		slog.Warn("prctx: RAG retrieve failed; skipping L4", "scope", scope, "err", err)
 		return nil, 0
@@ -181,11 +193,29 @@ func (b *LayeredBuilder) buildL4(
 		return nil, 0
 	}
 
-	// 按预算截断：单条 snippet 字符不超过 budget/N（均分）
-	maxCharsPerRef := (l4Budget * charsPerToken) / len(refs)
-	out := make([]index.Reference, 0, len(refs))
-	used := 0
+	// 过滤：cosine < 阈值（噪音）+ path 在 L2 出现（重复）
+	filtered := make([]index.Reference, 0, len(refs))
 	for _, r := range refs {
+		if r.Score < defaultRAGScoreThreshold {
+			continue
+		}
+		if skipPaths[r.File] {
+			continue
+		}
+		filtered = append(filtered, r)
+		if len(filtered) >= defaultRAGTopK {
+			break
+		}
+	}
+	if len(filtered) == 0 {
+		return nil, 0
+	}
+
+	// 按预算截断：单条 snippet 字符不超过 budget/N（均分）
+	maxCharsPerRef := (l4Budget * charsPerToken) / len(filtered)
+	out := make([]index.Reference, 0, len(filtered))
+	used := 0
+	for _, r := range filtered {
 		snippet := r.Snippet
 		if maxCharsPerRef > 0 && len(snippet) > maxCharsPerRef {
 			snippet = snippet[:maxCharsPerRef] + "\n...[truncated]"
@@ -194,7 +224,14 @@ func (b *LayeredBuilder) buildL4(
 		if used+tok > l4Budget {
 			break
 		}
-		out = append(out, index.Reference{File: r.File, Snippet: snippet, Reason: r.Reason})
+		// 保留所有元数据字段（含 PRNumber + Score）；之前只复制 3 个字段是 P1 bug
+		out = append(out, index.Reference{
+			File:     r.File,
+			Snippet:  snippet,
+			Reason:   r.Reason,
+			PRNumber: r.PRNumber,
+			Score:    r.Score,
+		})
 		used += tok
 	}
 	return out, used
