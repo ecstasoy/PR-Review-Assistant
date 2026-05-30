@@ -81,9 +81,10 @@ export function FileDiff({ file, riskByLine, suggestionsByLine }: Props) {
                     newLine != null ? riskByLine?.get(newLine) : undefined;
                   const suggestions =
                     newLine != null ? suggestionsByLine?.get(newLine) : undefined;
+                  const anchorId = newLine !== null ? `L-${file.path}-${newLine}` : undefined;
                   return (
                     <div key={`${i}-${j}`}>
-                      <DiffRow line={line} sevHit={sevHit} />
+                      <DiffRow line={line} sevHit={sevHit} anchorId={anchorId} />
                       {suggestions?.map((s, k) => (
                         <InlineSuggestion key={`s-${k}`} suggestion={s} />
                       ))}
@@ -107,9 +108,11 @@ const sevBar: Record<Risk["severity"], string> = {
 function DiffRow({
   line,
   sevHit,
+  anchorId,
 }: {
   line: DiffLineModel;
   sevHit?: Risk["severity"];
+  anchorId?: string;
 }) {
   const isAdd = line.type === "add";
   const isDel = line.type === "del";
@@ -121,10 +124,10 @@ function DiffRow({
   return (
     <div
       className={cn(
-        "relative grid items-stretch leading-[20px] grid-cols-[44px_44px_18px_1fr]",
+        "relative grid items-stretch leading-[20px] grid-cols-[44px_44px_18px_1fr] scroll-mt-20",
         rowBg,
       )}
-      id={line.new !== null ? `L-${line.new}` : undefined}
+      id={anchorId}
     >
       {sevHit ? (
         <span

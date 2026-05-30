@@ -1,15 +1,17 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { use, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { getReview } from "@/lib/api";
-import type { PrMeta, ReviewDetail } from "@/lib/types";
+import type { File, PrMeta, Risk, ReviewDetail } from "@/lib/types";
 import { ReviewTopBar, type ViewKey } from "@/components/review/ReviewTopBar";
+import { Sidebar } from "@/components/review/Sidebar";
 import { SummaryCard } from "@/components/review/SummaryCard";
 import { RisksList } from "@/components/review/RisksList";
-import { SuggestionList } from "@/components/SuggestionList";
+import { DiffView } from "@/components/review/DiffView";
+import { AgentPanel } from "@/components/review/AgentPanel";
 import { Spinner } from "@/components/ui/spinner";
 
 interface PageProps {
@@ -18,10 +20,15 @@ interface PageProps {
 
 const VALID_VIEWS: ViewKey[] = ["report", "diff", "session"];
 
-// /review/[id] 评审结果页。cached 模式所有 stage 默认 done。
-// Sidebar / DiffView / AgentPanel 等组件由后续 commit 接入。
+// /review/[id] 评审结果页（cached-only）。
+// 严格按 design 原型 ReviewResult.jsx：全宽 dashboard，顶 ReviewTopBar，
+// 左 Sidebar（可折叠），中主区（max-w 1080），右 AgentPanel（可 toggle）。
+// view 通过 ?view= 切换：报告 / Diff / 会话；cached 模式 stage 全 done。
+// 跨视图跳转：点 Sidebar 文件 / 风险 → 切到 Diff 视图 + scrollTop 定位锚点行。
 export default function ReviewDetailPage({ params }: PageProps) {
   const { id } = use(params);
+  const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const viewParam = searchParams.get("view") as ViewKey | null;
   const view: ViewKey =
@@ -31,6 +38,11 @@ export default function ReviewDetailPage({ params }: PageProps) {
   const [error, setError] = useState<string | null>(null);
   const [agentOpen, setAgentOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [activeFile, setActiveFile] = useState<string | undefined>(undefined);
+
+  const scrollRef = useRef<HTMLElement>(null);
+  // 切到 Diff 视图前记下要滚的锚；视图挂载后 useEffect 消费
+  const pendingScroll = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -45,6 +57,58 @@ export default function ReviewDetailPage({ params }: PageProps) {
       cancelled = true;
     };
   }, [id]);
+
+  // scrollToAnchor 容器内手动 scrollTop 赋值（design README §6 明确不要 scrollIntoView）
+  // + 1.1s 闪烁背景突出目标行
+  const scrollToAnchor = useCallback((anchorId: string) => {
+    const cont = scrollRef.current;
+    const el = document.getElementById(anchorId);
+    if (!cont || !el) return;
+    const top =
+      el.getBoundingClientRect().top - cont.getBoundingClientRect().top + cont.scrollTop - 90;
+    cont.scrollTop = Math.max(0, top);
+    const prevBg = el.style.background;
+    el.style.transition = "background .2s";
+    el.style.background = "var(--accent-soft)";
+    window.setTimeout(() => {
+      el.style.background = prevBg;
+    }, 1100);
+  }, []);
+
+  // 视图切到 Diff 时，flush 之前积压的滚动请求
+  useEffect(() => {
+    if (view !== "diff" || !pendingScroll.current) return;
+    const id = pendingScroll.current;
+    pendingScroll.current = null;
+    // 等 DOM mount 完成
+    requestAnimationFrame(() => scrollToAnchor(id));
+  }, [view, scrollToAnchor]);
+
+  function gotoView(next: ViewKey) {
+    router.replace(`${pathname}?view=${next}`, { scroll: false });
+  }
+
+  function pickFile(path: string) {
+    setActiveFile(path);
+    const anchor = `file-${path}`;
+    if (view !== "diff") {
+      pendingScroll.current = anchor;
+      gotoView("diff");
+      return;
+    }
+    scrollToAnchor(anchor);
+  }
+
+  function pickRisk(r: Risk) {
+    if (r.line == null) return;
+    const anchor = `L-${r.file}-${r.line}`;
+    if (view !== "diff") {
+      pendingScroll.current = anchor;
+      gotoView("diff");
+      return;
+    }
+    scrollToAnchor(anchor);
+  }
 
   if (error) {
     return (
@@ -64,14 +128,12 @@ export default function ReviewDetailPage({ params }: PageProps) {
     );
   }
 
-  // PrMeta 拼接：detail 已含完整 meta，但 SSE pr 事件含 url 字段而 detail 没有
-  const githubURL = `https://github.com/${detail.owner}/${detail.repo}/pull/${detail.pr}`;
   const pr: PrMeta = {
     id: detail.id,
     owner: detail.owner,
     repo: detail.repo,
     pr: detail.pr,
-    url: githubURL,
+    url: `https://github.com/${detail.owner}/${detail.repo}/pull/${detail.pr}`,
     head_sha: detail.head_sha,
     title: detail.title ?? "",
     author: detail.author,
@@ -85,6 +147,8 @@ export default function ReviewDetailPage({ params }: PageProps) {
     ci: detail.ci,
     checks: detail.checks,
   };
+  const files: File[] = detail.files ?? [];
+  const risks: Risk[] = detail.risks ?? [];
 
   return (
     <div className="flex h-screen flex-col bg-bg">
@@ -96,25 +160,37 @@ export default function ReviewDetailPage({ params }: PageProps) {
         onToggleAgent={() => setAgentOpen((o) => !o)}
         agentOpen={agentOpen}
       />
-      <main className="flex-1 overflow-y-auto">
-        <div className="mx-auto flex max-w-[1080px] flex-col gap-4 px-5 py-5">
-          {/* sidebar / diff / agent 视图由后续 commit 接入；当前仅 Report 视图可用 */}
-          {view !== "session" ? (
-            <>
-              <SummaryCard summary={detail.summary} />
-              {detail.risks && detail.risks.length > 0 ? (
-                <RisksList risks={detail.risks} />
-              ) : null}
-              {view === "report" && detail.suggestions && detail.suggestions.length > 0 ? (
-                <SuggestionList suggestions={detail.suggestions} />
-              ) : null}
-            </>
-          ) : (
-            <SessionStub />
-          )}
-          {sidebarCollapsed ? null : null /* 临时无操作；Sidebar commit 接入 */}
-        </div>
-      </main>
+      <div className="flex min-h-0 flex-1">
+        {!sidebarCollapsed && view !== "session" ? (
+          <Sidebar
+            pr={pr}
+            files={files}
+            risks={risks}
+            activeFile={activeFile}
+            onPickFile={pickFile}
+            onPickRisk={pickRisk}
+          />
+        ) : null}
+        <main ref={scrollRef} className="min-w-0 flex-1 overflow-y-auto">
+          <div className="mx-auto flex max-w-[1080px] flex-col gap-4 px-5 py-5">
+            {view === "report" ? (
+              <>
+                <SummaryCard summary={detail.summary} />
+                {risks.length > 0 ? <RisksList risks={risks} /> : null}
+              </>
+            ) : view === "diff" ? (
+              <DiffView
+                files={files}
+                risks={risks}
+                suggestions={detail.suggestions}
+              />
+            ) : (
+              <SessionStub />
+            )}
+          </div>
+        </main>
+        {agentOpen ? <AgentPanel onClose={() => setAgentOpen(false)} /> : null}
+      </div>
     </div>
   );
 }
@@ -124,7 +200,7 @@ function SessionStub() {
     <section className="rounded-lg border border-border bg-surface p-8 text-center">
       <p className="text-sm font-medium text-text">会话视图即将上线</p>
       <p className="mt-2 text-xs text-muted">
-        agent 步骤时间线 + 实时引导 —— 后续 PR 落地。
+        agent 步骤时间线 + 实时引导 —— v2 落地。
       </p>
     </section>
   );
