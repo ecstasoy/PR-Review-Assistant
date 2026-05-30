@@ -53,10 +53,17 @@ export function AgentPanel({ onClose, reviewId }: Props) {
   const [thinking, setThinking] = useState(false);
   const inFlightRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [msgs, thinking]);
+
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+    };
+  }, []);
 
   async function send(text?: string) {
     const q = (text ?? input).trim();
@@ -65,6 +72,10 @@ export function AgentPanel({ onClose, reviewId }: Props) {
     setMsgs((m) => [...m, { role: "user", text: q }]);
     setInput("");
     setThinking(true);
+
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
     try {
       await streamSteer(
@@ -137,7 +148,7 @@ export function AgentPanel({ onClose, reviewId }: Props) {
             setMsgs((m) => [...m, { role: "assistant", text: `❌ ${msg}` }]);
           },
         },
-        undefined,
+        controller.signal,
         "agent",
       );
     } catch (e) {
@@ -157,6 +168,11 @@ export function AgentPanel({ onClose, reviewId }: Props) {
     ? "针对这个 PR 提问，agent 会自动调工具…"
     : "流式评审完成后可在此追问";
 
+  function handleClose() {
+    abortControllerRef.current?.abort();
+    onClose();
+  }
+
   return (
     <aside className="flex h-full w-[360px] shrink-0 flex-col border-l border-border bg-surface">
       <header className="flex items-center gap-2 border-b border-border px-3 py-2.5">
@@ -169,7 +185,7 @@ export function AgentPanel({ onClose, reviewId }: Props) {
         </span>
         <button
           type="button"
-          onClick={onClose}
+          onClick={handleClose}
           className="ml-auto inline-flex h-7 w-7 items-center justify-center rounded-md text-muted hover:bg-surface-hover hover:text-text"
           aria-label="关闭"
         >
