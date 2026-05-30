@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   AlignLeft,
@@ -9,6 +9,7 @@ import {
   GitBranch,
   GitPullRequest,
   History as HistoryIcon,
+  MessageSquare,
   Send,
   Sparkle,
 } from "lucide-react";
@@ -20,7 +21,17 @@ import { FileStatusBadge } from "@/components/ui/file-status-badge";
 import { SeverityBadge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
 
-type StepStatus = "pending" | "running" | "done";
+type StepStatus = "pending" | "running" | "done" | "error";
+
+// SteerEntry 一次用户引导的记录；时间线追加到 5 步主流程之后
+interface SteerEntry {
+  id: string;
+  text: string;
+  stage: "risks" | "suggestions";
+  status: "running" | "done" | "error";
+  resultCount?: number;
+  error?: string;
+}
 
 interface Props {
   pr: PrMeta;
@@ -77,6 +88,54 @@ export function AgentSessionView({
       !streaming && suggestionsDone ? "done" : "pending",
     ];
   }, [streaming, hasFiles, summary, risksDone, suggestionsDone]);
+
+  // steer 历史：每条引导一个步骤；状态机由 streamSteer 回调驱动
+  const [steerHistory, setSteerHistory] = useState<SteerEntry[]>([]);
+  const [steerInFlight, setSteerInFlight] = useState(false);
+  const steerInFlightRef = useRef(false);
+
+  const handleSteerSend = useCallback(
+    async (text: string, stage: "risks" | "suggestions") => {
+      if (!reviewId || steerInFlightRef.current) return;
+      steerInFlightRef.current = true;
+      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      setSteerHistory((prev) => [...prev, { id, text, stage, status: "running" }]);
+      setSteerInFlight(true);
+      const markDone = (count: number) =>
+        setSteerHistory((prev) =>
+          prev.map((e) => (e.id === id ? { ...e, status: "done", resultCount: count } : e)),
+        );
+      const markError = (msg: string) =>
+        setSteerHistory((prev) =>
+          prev.map((e) => (e.id === id ? { ...e, status: "error", error: msg } : e)),
+        );
+      try {
+        await streamSteer(reviewId, text, stage, {
+          onSteeredRisks: (r) => {
+            onSteeredRisks?.(r);
+            if (stage === "risks") markDone(r.length);
+          },
+          onSteeredSuggestions: (s) => {
+            onSteeredSuggestions?.(s);
+            if (stage === "suggestions") markDone(s.length);
+          },
+          onStageError: (_s, msg) => markError(msg),
+        });
+        // 兜底：极端情况下流结束仍未拿到 steered 帧，标 done 不报错
+        setSteerHistory((prev) =>
+          prev.map((e) =>
+            e.id === id && e.status === "running" ? { ...e, status: "done", resultCount: 0 } : e,
+          ),
+        );
+      } catch (e) {
+        markError(e instanceof Error ? e.message : String(e));
+      } finally {
+        steerInFlightRef.current = false;
+        setSteerInFlight(false);
+      }
+    },
+    [reviewId, onSteeredRisks, onSteeredSuggestions],
+  );
 
   const finished = !streaming && suggestionsDone;
 
@@ -159,10 +218,23 @@ export function AgentSessionView({
             title="写入缓存"
             status={statuses[4]}
             meta={statuses[4] === "done" ? "SQLite" : ""}
-            isLast
+            isLast={steerHistory.length === 0}
           >
             <CacheDetail pr={pr} />
           </Step>
+
+          {steerHistory.map((entry, i) => (
+            <Step
+              key={entry.id}
+              icon={<MessageSquare className="h-3.5 w-3.5" />}
+              title="用户引导"
+              status={entry.status}
+              meta={steerMeta(entry)}
+              isLast={i === steerHistory.length - 1}
+            >
+              <SteerDetail entry={entry} />
+            </Step>
+          ))}
 
           {finished ? (
             <FinalCard pr={pr} risks={risks} suggestions={suggestions} />
@@ -184,11 +256,41 @@ export function AgentSessionView({
       </div>
       <SteerComposer
         pr={pr}
-        reviewId={reviewId}
-        onSteeredRisks={onSteeredRisks}
-        onSteeredSuggestions={onSteeredSuggestions}
+        disabled={!reviewId}
+        inFlight={steerInFlight}
+        onSend={handleSteerSend}
       />
     </div>
+  );
+}
+
+function steerMeta(entry: SteerEntry): string {
+  const label = entry.stage === "risks" ? "重评风险" : "重出建议";
+  if (entry.status === "running") return `${label} · 运行中`;
+  if (entry.status === "error") return `${label} · 失败`;
+  return `${label} · ${entry.resultCount ?? 0} 项`;
+}
+
+function SteerDetail({ entry }: { entry: SteerEntry }) {
+  return (
+    <ToolCard
+      label={
+        <>
+          <MessageSquare className="h-3 w-3" />
+          POST /api/review/:id/steer · stage = {entry.stage}
+        </>
+      }
+    >
+      <p className="text-sm leading-snug text-text-2">「{entry.text}」</p>
+      {entry.status === "error" && entry.error ? (
+        <p className="mt-2 text-[10.5px] text-high">引导失败：{entry.error}</p>
+      ) : null}
+      {entry.status === "done" ? (
+        <p className="mt-2 text-[10.5px] text-faint">
+          已替换 {entry.stage === "risks" ? "风险" : "建议"} 列表 · 共 {entry.resultCount ?? 0} 项
+        </p>
+      ) : null}
+    </ToolCard>
   );
 }
 
@@ -212,6 +314,7 @@ function Step({
   const isDone = status === "done";
   const isRunning = status === "running";
   const isPending = status === "pending";
+  const isError = status === "error";
   return (
     <div className="grid grid-cols-[26px_1fr] gap-3">
       <div className="flex flex-col items-center">
@@ -222,10 +325,18 @@ function Step({
               ? "border-border bg-surface-2 text-faint"
               : isRunning
                 ? "border-border-strong bg-surface text-accent"
-                : "border-border-strong bg-surface text-ok",
+                : isError
+                  ? "border-high-bd bg-high-bg text-high"
+                  : "border-border-strong bg-surface text-ok",
           )}
         >
-          {isRunning ? <Spinner size="xs" className="text-accent" /> : icon}
+          {isRunning ? (
+            <Spinner size="xs" className="text-accent" />
+          ) : isError ? (
+            <AlertTriangle className="h-3.5 w-3.5" />
+          ) : (
+            icon
+          )}
         </span>
         {!isLast ? (
           <span className="my-1 min-h-3 w-[1.5px] flex-1 bg-border" />
@@ -244,8 +355,13 @@ function Step({
           {isRunning ? (
             <span className="whitespace-nowrap font-mono text-[10px] text-accent">运行中…</span>
           ) : null}
-          {meta && isDone ? (
-            <span className="ml-auto whitespace-nowrap font-mono text-[10.5px] text-faint">
+          {meta && (isDone || isError) ? (
+            <span
+              className={cn(
+                "ml-auto whitespace-nowrap font-mono text-[10.5px]",
+                isError ? "text-high" : "text-faint",
+              )}
+            >
               {meta}
             </span>
           ) : null}
@@ -594,47 +710,29 @@ function FinalCard({
   );
 }
 
-// SteerComposer 底部「引导」输入条；接 POST /api/review/:id/steer。
-// reviewId 缺失（streaming 模式）→ 禁用 + 提示「等流式完成后可引导」
+// SteerComposer 底部「引导」输入条；纯 UI 组件——发送 / 状态机由父级 AgentSessionView 持有。
+// disabled = streaming 模式（reviewId 未知）；inFlight = 父级正在跑一次引导
 function SteerComposer({
   pr,
-  reviewId,
-  onSteeredRisks,
-  onSteeredSuggestions,
+  disabled,
+  inFlight,
+  onSend,
 }: {
   pr: PrMeta;
-  reviewId?: string;
-  onSteeredRisks?: (risks: Risk[]) => void;
-  onSteeredSuggestions?: (suggestions: Suggestion[]) => void;
+  disabled: boolean;
+  inFlight: boolean;
+  onSend: (text: string, stage: "risks" | "suggestions") => void;
 }) {
   const [text, setText] = useState("");
   const [stage, setStage] = useState<"risks" | "suggestions">("risks");
-  const [inFlight, setInFlight] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const githubURL = `https://github.com/${pr.owner}/${pr.repo}/pull/${pr.pr}`;
-  const enabled = !!reviewId && !inFlight;
+  const enabled = !disabled && !inFlight;
 
-  async function send() {
+  function send() {
     const v = text.trim();
-    if (!v || !reviewId || inFlight) return;
-    setInFlight(true);
-    setError(null);
-    let stageFailed = false;
-    try {
-      await streamSteer(reviewId, v, stage, {
-        onSteeredRisks: (r) => onSteeredRisks?.(r),
-        onSteeredSuggestions: (s) => onSteeredSuggestions?.(s),
-        onStageError: (_s, msg) => {
-          stageFailed = true;
-          setError(msg);
-        },
-      });
-      if (!stageFailed) setText("");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setInFlight(false);
-    }
+    if (!v || !enabled) return;
+    onSend(v, stage);
+    setText("");
   }
 
   return (
@@ -661,6 +759,7 @@ function SteerComposer({
                 className={cn(
                   "rounded-sm px-2 py-[3px] font-mono text-[10.5px] transition-colors",
                   stage === s ? "bg-surface text-text" : "text-muted hover:text-text",
+                  )}
               >
                 {s === "risks" ? "重评风险" : "重出建议"}
               </button>
@@ -694,9 +793,9 @@ function SteerComposer({
             }}
             rows={1}
             placeholder={
-              reviewId
-                ? `引导 agent ${stage === "risks" ? "重评风险" : "重出建议"}（例：重点看并发安全 / 忽略 style 类问题）…`
-                : "流式评审完成后可在此引导 agent"
+              disabled
+                ? "流式评审完成后可在此引导 agent"
+                : `引导 agent ${stage === "risks" ? "重评风险" : "重出建议"}（例：重点看并发安全 / 忽略 style 类问题）…`
             }
             className="max-h-[120px] min-w-0 flex-1 resize-none border-none bg-transparent px-1.5 py-1.5 text-sm leading-snug text-text outline-none placeholder:text-faint disabled:cursor-not-allowed"
           />
@@ -709,9 +808,6 @@ function SteerComposer({
             {inFlight ? <Spinner size="xs" className="text-accent-fg" /> : <Send className="h-3.5 w-3.5" />}
           </button>
         </div>
-        {error ? (
-          <p className="mt-1 text-[10.5px] text-high">引导失败：{error}</p>
-        ) : null}
       </div>
     </div>
   );
