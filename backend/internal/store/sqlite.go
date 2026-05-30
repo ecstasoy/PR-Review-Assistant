@@ -44,6 +44,9 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 // Close 关闭底层 db handle。
 func (s *SQLiteStore) Close() error { return s.db.Close() }
 
+// Ping 走 database/sql 的 PingContext；ctx 超时即返错。
+func (s *SQLiteStore) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
+
 // Get 按 (owner, repo, pr_number, head_sha) 查缓存；未命中返 (nil, nil) 而非 error。
 func (s *SQLiteStore) Get(ctx context.Context, owner, repo string, pr int, headSHA string) (*Record, error) {
 	const q = `SELECT id, user_id, owner, repo, pr_number, head_sha, payload, created_at

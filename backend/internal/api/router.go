@@ -25,16 +25,16 @@ func Register(r *gin.Engine, d Deps) {
 	g := r.Group("/api")
 	g.Use(middleware.AuthCtx())
 
-	// /health 不限：容器健康检查 / k8s liveness 高频探测，限了会被误杀
-	g.GET("/health", Health)
-
-	// 昂贵端点（烧 LLM）单独建限流器
 	expensive := middleware.RateLimit(middleware.ExpensiveDefault)
-	g.POST("/review", expensive, PostReview(d))
-	g.POST("/review/:id/steer", expensive, PostSteer(d))
-
-	// 读路径放宽：列表 / 详情仅查 SQLite，单实例千 QPS 不痛
 	read := middleware.RateLimit(middleware.ReadDefault)
+
+	// /health 留为 liveness 别名（向后兼容 v1/v2 配置）
+	g.GET("/health", Health)
+	g.GET("/health/live", Health)
+	g.GET("/health/ready", Readiness(d))
+
+	g.POST("/review", expensive, PostReview(d))
 	g.GET("/reviews", read, ListReviews(d))
 	g.GET("/reviews/:id", read, GetReview(d))
+	g.POST("/review/:id/steer", expensive, PostSteer(d))
 }
