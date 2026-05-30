@@ -23,6 +23,28 @@ type Embedder interface {
 	Embed(ctx context.Context, texts []string) ([][]float32, error)
 }
 
+// IndexerChunk 单个待索引文本片段；与 SQLiteRetriever.Chunk 同形状。
+// 抽到 interface 包让 Indexer 接口不依赖具体实现。
+type IndexerChunk struct {
+	Path    string
+	Idx     int    // 同 path 下的序号；切大文件用
+	Content string // 实际文本内容
+}
+
+// Indexer 把 chunks 写入索引；与 Retriever 解耦读写。
+// SQLiteRetriever 同时实现两个接口；生产可拆给独立 worker（v3 异步索引）。
+type Indexer interface {
+	UpsertMany(ctx context.Context, scope string, chunks []IndexerChunk) error
+}
+
+// NoopIndexer Indexer 的空实现；RAG 关闭时注入避免 nil 检查。
+type NoopIndexer struct{}
+
+// UpsertMany 不做任何事。
+func (NoopIndexer) UpsertMany(_ context.Context, _ string, _ []IndexerChunk) error {
+	return nil
+}
+
 // NoopRetriever 永远返回空；v1 默认注入。
 type NoopRetriever struct{}
 

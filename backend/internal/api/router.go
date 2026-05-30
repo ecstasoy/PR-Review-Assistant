@@ -17,6 +17,7 @@ import (
 // Cache 可为 nil（限流中间件降级 pass-through）；生产环境应注入 MemoryCache 或 RedisCache
 // Embedder 可为 nil（RAG 关闭）；B1 引入用于 B2/B3 RAG retriever
 // Retriever 可为 nil（RAG 关闭）；缺失时 prctx 跳 L4
+// Indexer 可为 nil（同 Retriever；通常与 Retriever 同实例，B4 引入分接口）
 type Deps struct {
 	Fetcher   github.Fetcher
 	Provider  llm.Provider
@@ -25,6 +26,7 @@ type Deps struct {
 	Cache     store.Cache
 	Embedder  index.Embedder
 	Retriever index.Retriever
+	Indexer   index.Indexer
 }
 
 // Register 挂载 /api 路由组。

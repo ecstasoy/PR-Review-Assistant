@@ -66,16 +66,13 @@ CREATE INDEX IF NOT EXISTS idx_chunks_scope ON chunks(scope);
 // Close 关闭底层 db。
 func (r *SQLiteRetriever) Close() error { return r.db.Close() }
 
-// Chunk 单个待索引文本片段
-type Chunk struct {
-	Path    string
-	Idx     int    // 同 path 下的序号；切大文件用
-	Content string // 实际文本内容
-}
+// Chunk 单个待索引文本片段；为方便 sqlite_retriever 内部测试保留 alias。
+// 公共类型见 index.IndexerChunk（与本类型同形状）。
+type Chunk = IndexerChunk
 
 // UpsertMany 批量编码并写入；同 (scope, path, idx) 会覆盖。
 // 失败整批返 err（半部分写入也算成功，下次重跑用 ON CONFLICT 自动去重）。
-func (r *SQLiteRetriever) UpsertMany(ctx context.Context, scope string, chunks []Chunk) error {
+func (r *SQLiteRetriever) UpsertMany(ctx context.Context, scope string, chunks []IndexerChunk) error {
 	if len(chunks) == 0 {
 		return nil
 	}
@@ -216,5 +213,8 @@ func cosineSim(a, b []float32) float32 {
 	return dot
 }
 
-// 编译期断言
-var _ Retriever = (*SQLiteRetriever)(nil)
+// 编译期断言：SQLiteRetriever 同时实现 Retriever + Indexer 两个接口
+var (
+	_ Retriever = (*SQLiteRetriever)(nil)
+	_ Indexer   = (*SQLiteRetriever)(nil)
+)
