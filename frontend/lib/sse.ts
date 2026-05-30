@@ -10,10 +10,38 @@ export interface StreamCallbacks {
   onSummaryDelta?: (delta: string) => void;
   onRisksDone?: (risks: Risk[]) => void;
   onSuggestionsDone?: (suggestions: Suggestion[]) => void;
+  onSteeredRisks?: (risks: Risk[]) => void;
+  onSteeredSuggestions?: (suggestions: Suggestion[]) => void;
   onInfo?: (message: string) => void;
   onStageError?: (stage: string, message: string) => void;
   onStageDone?: (stage: string) => void;
   onDone?: () => void;
+}
+
+// streamSteer POST /api/review/:id/steer 引导重跑 risks 或 suggestions 阶段。
+// 与 streamReview 一样按 SSE 帧分发；4xx/5xx 同步错误直接 throw。
+export async function streamSteer(
+  reviewId: string,
+  text: string,
+  stage: "risks" | "suggestions",
+  cb: StreamCallbacks,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(`/api/review/${encodeURIComponent(reviewId)}/steer`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, stage }),
+    signal,
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    const msg = (data as { error?: string }).error ?? `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+  if (!res.body) {
+    throw new Error("响应无 body");
+  }
+  await consume(res.body, cb);
 }
 
 // streamReview POST /api/review，按 SSE 帧分发到对应回调。
@@ -37,8 +65,12 @@ export async function streamReview(
   if (!res.body) {
     throw new Error("响应无 body");
   }
+  await consume(res.body, cb);
+}
 
-  const reader = res.body.getReader();
+// consume 共用读流 / 切帧 / 派发循环；streamReview 与 streamSteer 都走这里
+async function consume(body: ReadableStream<Uint8Array>, cb: StreamCallbacks): Promise<void> {
+  const reader = body.getReader();
   const decoder = new TextDecoder();
   let buf = "";
 
@@ -107,6 +139,12 @@ function dispatch(ev: ParsedFrame, cb: StreamCallbacks): void {
       break;
     case "suggestions_done":
       cb.onSuggestionsDone?.(parsed as Suggestion[]);
+      break;
+    case "steered_risks_done":
+      cb.onSteeredRisks?.(parsed as Risk[]);
+      break;
+    case "steered_suggestions_done":
+      cb.onSteeredSuggestions?.(parsed as Suggestion[]);
       break;
     case "info": {
       const p = parsed as { message?: string };

@@ -314,6 +314,9 @@ function ReviewDetailPageContent({ id }: { id: string }) {
                 risksDone={risksDone}
                 suggestionsDone={suggestionsDone}
                 streaming={streaming}
+                reviewId={isStreaming ? undefined : id}
+                onSteeredRisks={setRisks}
+                onSteeredSuggestions={setSuggestions}
               />
             )}
           </div>

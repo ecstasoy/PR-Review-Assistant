@@ -135,6 +135,8 @@ export type EventType =
   | "summary_delta"
   | "risks_done"
   | "suggestions_done"
+  | "steered_risks_done"
+  | "steered_suggestions_done"
   | "files"
   | "budget_report"
   | "info"
