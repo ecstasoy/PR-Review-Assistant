@@ -99,6 +99,76 @@ func TestIndexPRChunks_TruncatesLongPatch(t *testing.T) {
 	}
 }
 
+// TestSplitPatchToHunks 验证多 @@ 头按 hunk 切；fallback 单 hunk；空跳过
+func TestSplitPatchToHunks(t *testing.T) {
+	cases := []struct {
+		name   string
+		patch  string
+		wantN  int
+		wantP0 string // 第一个 hunk 头部
+	}{
+		{
+			"two hunks",
+			"@@ -1,3 +1,3 @@\n line1\n-old\n+new\n@@ -10,3 +10,3 @@\n line10\n-old2\n+new2",
+			2,
+			"@@ -1,3 +1,3 @@",
+		},
+		{
+			"single hunk",
+			"@@ -1,3 +1,3 @@\n a\n b",
+			1,
+			"@@ -1,3 +1,3 @@",
+		},
+		{
+			"no hunk header fallback",
+			"some raw content without hunk header\nmore",
+			1,
+			"some raw content without hunk header",
+		},
+		{"empty", "", 0, ""},
+		{"whitespace only", "   \n\n", 0, ""},
+	}
+	for _, tc := range cases {
+		got := splitPatchToHunks(tc.patch)
+		if len(got) != tc.wantN {
+			t.Errorf("%s: got %d hunks, want %d (out=%+v)", tc.name, len(got), tc.wantN, got)
+			continue
+		}
+		if tc.wantN > 0 && !strings.HasPrefix(got[0], tc.wantP0) {
+			t.Errorf("%s: hunk[0] should start with %q, got %q", tc.name, tc.wantP0, got[0])
+		}
+	}
+}
+
+// TestIndexPRChunks_MultiHunkFile 一个文件含 2 个 hunk → 应产 2 chunks，Idx=0/1
+func TestIndexPRChunks_MultiHunkFile(t *testing.T) {
+	si := &stubIndexer{}
+	pr := gh.PullRequest{
+		Owner: "o", Repo: "r", Number: 99,
+		Files: []gh.File{{
+			Path:  "big.go",
+			Patch: "@@ -1,2 +1,2 @@\n a\n-b\n+B\n@@ -100,2 +100,2 @@\n x\n-y\n+Y",
+		}},
+	}
+	indexPRChunks(context.Background(), si, pr)
+	if si.calls != 1 {
+		t.Fatalf("want 1 UpsertMany call, got %d", si.calls)
+	}
+	ch := si.chunks[0]
+	if len(ch) != 2 {
+		t.Fatalf("want 2 chunks (2 hunks), got %d", len(ch))
+	}
+	if ch[0].Idx != 0 || ch[1].Idx != 1 {
+		t.Errorf("hunk indices wrong: %d, %d (want 0,1)", ch[0].Idx, ch[1].Idx)
+	}
+	if ch[0].PRNumber != 99 || ch[1].PRNumber != 99 {
+		t.Errorf("both chunks must carry PRNumber=99: %d, %d", ch[0].PRNumber, ch[1].PRNumber)
+	}
+	if !strings.HasPrefix(ch[0].Content, "@@ -1,2") || !strings.HasPrefix(ch[1].Content, "@@ -100,2") {
+		t.Errorf("hunk content order wrong; got:\n[0]=%q\n[1]=%q", ch[0].Content, ch[1].Content)
+	}
+}
+
 func TestIndexPRChunks_UpsertErrorDoesNotPanic(t *testing.T) {
 	// 索引失败仅 warn，不阻塞评审流程；helper 不返 error 不应 panic
 	idx := &stubIndexer{err: errors.New("embed quota exceeded")}

@@ -25,8 +25,36 @@ import (
 // embedding API 多数模型上限 8192 token≈30K 字符，留余量
 const indexMaxChunkChars = 8000
 
-// indexPRChunks 把本次 PR 的 file patches 转 chunks 同步写索引
+// splitPatchToHunks 把 unified diff patch 按 `@@ ` hunk 头切成独立片段；每片以 @@ 开头
+// 没 @@ 头时（罕见：合并后的预处理）退回整 patch 作单 hunk
+// 召回粒度从"一文件一 chunk"细化到"一 hunk 一 chunk"，让 cosine 分更准（噪音少）
+func splitPatchToHunks(patch string) []string {
+	if !strings.Contains(patch, "@@ ") {
+		// fallback：当作单 hunk；空 patch 由 caller 提前 skip
+		if strings.TrimSpace(patch) == "" {
+			return nil
+		}
+		return []string{patch}
+	}
+	var hunks []string
+	var cur strings.Builder
+	for _, line := range strings.Split(patch, "\n") {
+		if strings.HasPrefix(line, "@@ ") && cur.Len() > 0 {
+			hunks = append(hunks, strings.TrimRight(cur.String(), "\n"))
+			cur.Reset()
+		}
+		cur.WriteString(line)
+		cur.WriteByte('\n')
+	}
+	if cur.Len() > 0 {
+		hunks = append(hunks, strings.TrimRight(cur.String(), "\n"))
+	}
+	return hunks
+}
+
+// indexPRChunks 把本次 PR 的 file patches 按 hunk 切 chunk 同步写索引
 // scope = "owner/repo"；同 (scope,path,idx) ON CONFLICT 覆盖 → 重复评同 PR 不会重复 embed
+// idx = 同 path 下 hunk 序号（从 0 开始），让多 hunk 文件不互相覆盖
 // 失败仅 warn 不阻断评审；NoopIndexer 直接 no-op 无 API 调用
 func indexPRChunks(ctx context.Context, idx index.Indexer, pr gh.PullRequest) {
 	if _, isNoop := idx.(index.NoopIndexer); isNoop {
@@ -34,14 +62,21 @@ func indexPRChunks(ctx context.Context, idx index.Indexer, pr gh.PullRequest) {
 	}
 	chunks := make([]index.IndexerChunk, 0, len(pr.Files))
 	for _, f := range pr.Files {
-		content := f.Patch
-		if content == "" {
+		if f.Patch == "" {
 			continue
 		}
-		if len(content) > indexMaxChunkChars {
-			content = content[:indexMaxChunkChars]
+		for hi, hunk := range splitPatchToHunks(f.Patch) {
+			content := hunk
+			if len(content) > indexMaxChunkChars {
+				content = content[:indexMaxChunkChars]
+			}
+			chunks = append(chunks, index.IndexerChunk{
+				Path:     f.Path,
+				Idx:      hi,
+				Content:  content,
+				PRNumber: pr.Number,
+			})
 		}
-		chunks = append(chunks, index.IndexerChunk{Path: f.Path, Idx: 0, Content: content, PRNumber: pr.Number})
 	}
 	if len(chunks) == 0 {
 		return
@@ -51,7 +86,7 @@ func indexPRChunks(ctx context.Context, idx index.Indexer, pr gh.PullRequest) {
 		slog.Warn("index PR chunks failed; review proceeds without fresh L4", "scope", scope, "err", err)
 		return
 	}
-	slog.Info("indexed PR chunks", "scope", scope, "chunks", len(chunks))
+	slog.Info("indexed PR chunks", "scope", scope, "files", len(pr.Files), "chunks", len(chunks))
 }
 
 // PostReview 接收 { url }，先用 JSON 处理预检错误；
