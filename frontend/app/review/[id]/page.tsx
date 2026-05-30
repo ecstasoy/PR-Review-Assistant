@@ -13,6 +13,7 @@ import { SummaryCard } from "@/components/review/SummaryCard";
 import { RisksList } from "@/components/review/RisksList";
 import { DiffView } from "@/components/review/DiffView";
 import { AgentPanel } from "@/components/review/AgentPanel";
+import { AgentSessionView } from "@/components/review/AgentSessionView";
 import { Spinner } from "@/components/ui/spinner";
 import type { StageState } from "@/components/review/StageChip";
 
@@ -279,7 +280,17 @@ function ReviewDetailPageContent({ id }: { id: string }) {
                 expandedFileNonce={expandRequest?.nonce}
               />
             ) : (
-              <SessionStub />
+              <AgentSessionView
+                pr={pr}
+                files={files}
+                risks={risks}
+                suggestions={suggestions}
+                summary={summary}
+                hasFiles={files.length > 0}
+                risksDone={risksDone}
+                suggestionsDone={suggestionsDone}
+                streaming={streaming}
+              />
             )}
           </div>
         </main>
@@ -380,13 +391,3 @@ function LoadingState() {
   );
 }
 
-function SessionStub() {
-  return (
-    <section className="rounded-lg border border-border bg-surface p-8 text-center">
-      <p className="text-sm font-medium text-text">会话视图即将上线</p>
-      <p className="mt-2 text-xs text-muted">
-        agent 步骤时间线 + 实时引导 —— v2 落地。
-      </p>
-    </section>
-  );
-}
