@@ -9,6 +9,7 @@ import { streamReview } from "@/lib/sse";
 import type { File, PrMeta, Risk, ReviewDetail, Suggestion } from "@/lib/types";
 import { ReviewTopBar, type ViewKey } from "@/components/review/ReviewTopBar";
 import { Sidebar } from "@/components/review/Sidebar";
+import { SessionList } from "@/components/review/SessionList";
 import { SummaryCard } from "@/components/review/SummaryCard";
 import { RisksList } from "@/components/review/RisksList";
 import { DiffView } from "@/components/review/DiffView";
@@ -256,7 +257,9 @@ function ReviewDetailPageContent({ id }: { id: string }) {
         agentOpen={agentOpen}
       />
       <div className="flex min-h-0 flex-1">
-        {!sidebarCollapsed && view !== "session" ? (
+        {sidebarCollapsed ? null : view === "session" ? (
+          <SessionList activeId={isStreaming ? undefined : id} />
+        ) : (
           <Sidebar
             pr={pr}
             files={files}
@@ -265,7 +268,7 @@ function ReviewDetailPageContent({ id }: { id: string }) {
             onPickFile={pickFile}
             onPickRisk={pickRisk}
           />
-        ) : null}
+        )}
         <main ref={scrollRef} className="min-w-0 flex-1 overflow-y-auto">
           <div className="mx-auto flex max-w-[1080px] flex-col gap-4 px-5 py-5">
             {info ? (
