@@ -1,0 +1,77 @@
+# 本地开发 / 集成测试用的 compose 编排
+# 生产部署（Fly.io / Render / Railway）走平台原生配置；本文件不作为生产 manifest
+#
+# 启动：docker compose up --build
+# 前端: http://localhost:3000  ·  后端: http://localhost:8080
+#
+# Postgres / Redis 占位（v3 主线①真部署用）：当前 backend 仍连 SQLite + 内存，
+# 这里把容器拉起来供未来 store.PostgresStore / store.RedisCache 接入
+
+services:
+  backend:
+    build: ./backend
+    container_name: prra-backend
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.deepseek.com}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      SQLITE_PATH: /app/data/reviews.db
+      # v3 真部署时切上：
+      # POSTGRES_URL: postgres://prra:prra@postgres:5432/prra?sslmode=disable
+      # REDIS_URL: redis://redis:6379/0
+    volumes:
+      - backend-data:/app/data
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: prra-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      BACKEND_URL: http://backend:8080
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # v3 主线①占位：业务还在 SQLite，PG 容器只起着等接入
+  postgres:
+    image: postgres:16-alpine
+    container_name: prra-postgres
+    environment:
+      POSTGRES_USER: prra
+      POSTGRES_PASSWORD: prra
+      POSTGRES_DB: prra
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prra -d prra"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # v3 主线①占位：缓存 + rate limit 计数会接入
+  redis:
+    image: redis:7-alpine
+    container_name: prra-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  backend-data:
+  pg-data:
+  redis-data:
