@@ -19,6 +19,7 @@ import (
 type cachedPayload struct {
 	Title       string          `json:"title,omitempty"`
 	Author      string          `json:"author,omitempty"`
+	AuthorRole  string          `json:"author_role,omitempty"`
 	State       string          `json:"state,omitempty"`
 	Labels      []string        `json:"labels,omitempty"`
 	BaseRef     string          `json:"base_ref,omitempty"`

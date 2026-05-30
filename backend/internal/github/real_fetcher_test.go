@@ -27,20 +27,21 @@ func TestRealFetcher_Fetch_Success(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/repos/golang/go/pulls/42", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"title":         "fix panic in scanner",
-			"body":          "fixes #999",
-			"state":         "open",
-			"merged":        false,
-			"user":          map[string]any{"login": "lin-mei"},
-			"labels":        []map[string]any{{"name": "bug"}, {"name": "needs-review"}},
-			"base":          map[string]any{"ref": "main"},
-			"head":          map[string]any{"sha": "deadbeef0000", "ref": "fix/scanner-panic"},
-			"created_at":    "2026-05-28T10:00:00Z",
-			"changed_files": 5,
-			"additions":     96,
-			"deletions":     41,
-			"commits":       4,
-			"comments":      7,
+			"title":              "fix panic in scanner",
+			"body":               "fixes #999",
+			"state":              "open",
+			"merged":             false,
+			"user":               map[string]any{"login": "lin-mei"},
+			"author_association": "CONTRIBUTOR",
+			"labels":             []map[string]any{{"name": "bug"}, {"name": "needs-review"}},
+			"base":               map[string]any{"ref": "main"},
+			"head":               map[string]any{"sha": "deadbeef0000", "ref": "fix/scanner-panic"},
+			"created_at":         "2026-05-28T10:00:00Z",
+			"changed_files":      5,
+			"additions":          96,
+			"deletions":          41,
+			"commits":            4,
+			"comments":           7,
 		})
 	})
 	mux.HandleFunc("/repos/golang/go/pulls/42/files", func(w http.ResponseWriter, r *http.Request) {
@@ -98,6 +99,9 @@ func TestRealFetcher_Fetch_Success(t *testing.T) {
 	// 新增 meta 字段
 	if got.Author != "lin-mei" {
 		t.Errorf("Author=%q want lin-mei", got.Author)
+	}
+	if got.AuthorRole != "CONTRIBUTOR" {
+		t.Errorf("AuthorRole=%q want CONTRIBUTOR", got.AuthorRole)
 	}
 	if got.State != StateOpen {
 		t.Errorf("State=%q want open", got.State)

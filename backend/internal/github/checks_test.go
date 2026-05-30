@@ -242,3 +242,45 @@ func TestRealFetcher_Fetch_CIErrorDegrades(t *testing.T) {
 		t.Errorf("Title 错: %q", got.Title)
 	}
 }
+
+// TestFetchChecks_PopulatesNoteFromOutputSummary 验证 check-run 的 output.summary 被填到 Check.Note
+// （典型用法：coverage check 在 pending 期间通过 summary 暴露当前覆盖率文本）
+func TestFetchChecks_PopulatesNoteFromOutputSummary(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/o/r/commits/sha/check-runs", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"total_count": 2,
+			"check_runs": []map[string]any{
+				{
+					"name":   "coverage",
+					"status": "in_progress",
+					"output": map[string]any{"summary": "82.4% (-0.3%)"},
+				},
+				{
+					"name":         "build",
+					"status":       "completed",
+					"conclusion":   "success",
+					"started_at":   "2026-05-28T10:00:00Z",
+					"completed_at": "2026-05-28T10:00:05Z",
+					// 无 output → Note 应为空
+				},
+			},
+		})
+	})
+	c, cleanup := ghClient(t, mux)
+	defer cleanup()
+
+	_, checks, err := fetchChecks(context.Background(), c, "o", "r", "sha")
+	if err != nil {
+		t.Fatalf("fetchChecks: %v", err)
+	}
+	if len(checks) != 2 {
+		t.Fatalf("checks len=%d want 2", len(checks))
+	}
+	if checks[0].Note != "82.4% (-0.3%)" {
+		t.Errorf("coverage Note=%q want 82.4%% (-0.3%%)", checks[0].Note)
+	}
+	if checks[1].Note != "" {
+		t.Errorf("build Note 应为空（无 output.summary），得到 %q", checks[1].Note)
+	}
+}
