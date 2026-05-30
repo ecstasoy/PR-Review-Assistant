@@ -336,7 +336,12 @@ function ReviewDetailPageContent({ id }: { id: string }) {
             )}
           </div>
         </main>
-        {agentOpen ? <AgentPanel onClose={() => setAgentOpen(false)} /> : null}
+        {agentOpen ? (
+          <AgentPanel
+            onClose={() => setAgentOpen(false)}
+            reviewId={isStreaming ? undefined : id}
+          />
+        ) : null}
       </div>
     </div>
   );
