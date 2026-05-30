@@ -73,9 +73,9 @@ export function AgentPanel({ onClose, reviewId }: Props) {
         "risks", // agent 模式忽略 stage 字段；填占位
         {
           onToolCallStart: (call) => {
-            setMsgs((m) => [
-              ...m,
-              {
+            setMsgs((m) => {
+              const idx = m.findIndex((msg) => msg.role === "tool" && msg.tool?.id === call.id);
+              const nextMsg: Msg = {
                 role: "tool",
                 text: call.name,
                 tool: {
@@ -84,8 +84,14 @@ export function AgentPanel({ onClose, reviewId }: Props) {
                   arguments: call.arguments,
                   status: "running",
                 },
-              },
-            ]);
+              };
+              if (idx >= 0) {
+                const copy = [...m];
+                copy[idx] = nextMsg;
+                return copy;
+              }
+              return [...m, nextMsg];
+            });
           },
           onToolCallDone: (call) => {
             setMsgs((m) => {
