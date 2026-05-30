@@ -66,10 +66,22 @@ type Result struct {
 }
 
 // Agent 一个工具调用循环。
+//
+// 可选 callback 字段（nil 安全）：用于 SSE 推帧 / 日志 / metric / tracing；
+// 不参与状态机决策，调用方只读取事件不能改变 loop 行为。
 type Agent struct {
 	Provider llm.Provider
 	Tools    *Registry
 	MaxSteps int
+
+	// OnToolCallStart 工具被调用前；用于前端 SSE tool_call_start 帧
+	OnToolCallStart func(ctx context.Context, call llm.ToolCall)
+	// OnToolCallDone 工具执行完后；result 即将作 tool message 回灌 LLM；
+	// 用于前端 SSE tool_call_done 帧。result 中含执行错误字符串（"error: ..."）。
+	OnToolCallDone func(ctx context.Context, call llm.ToolCall, result string)
+	// OnText 每收到一段 assistant 文本增量（流式）；用于前端实时显示模型思考
+	// 注意：A2 内部用 lastText 累积；这里同样在 chunk 到达时调用一次
+	OnText func(ctx context.Context, delta string)
 }
 
 // Run 跑 ReAct 循环：LLM → 看是否 tool_calls → 跑工具 → 结果回灌作 role=tool 消息 → 再调 LLM。
@@ -129,6 +141,9 @@ func (a *Agent) Run(ctx context.Context, req llm.Request) (Result, error) {
 			}
 			if c.Text != "" {
 				lastText.WriteString(c.Text)
+				if a.OnText != nil {
+					a.OnText(ctx, c.Text)
+				}
 			}
 			if len(c.ToolCalls) > 0 {
 				calls = append(calls, c.ToolCalls...)
@@ -147,7 +162,13 @@ func (a *Agent) Run(ctx context.Context, req llm.Request) (Result, error) {
 			ToolCalls: calls,
 		})
 		for _, tc := range calls {
+			if a.OnToolCallStart != nil {
+				a.OnToolCallStart(ctx, tc)
+			}
 			result := a.runTool(ctx, tc)
+			if a.OnToolCallDone != nil {
+				a.OnToolCallDone(ctx, tc, result)
+			}
 			msgs = append(msgs, llm.Message{
 				Role:       "tool",
 				Name:       tc.Name,
