@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS reviews (
     user_id     TEXT,                       -- v1 可空；v2 OAuth 后填
     owner       TEXT NOT NULL,
     repo        TEXT NOT NULL,
-    pr_number   INTEGER NOT NULL,
+    pr_number   BIGINT NOT NULL,
     head_sha    TEXT NOT NULL,
     payload     BYTEA NOT NULL,             -- 序列化后的 review.Result 字节数据
     created_at  BIGINT NOT NULL             -- Unix 时间戳（纳秒）

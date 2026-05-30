@@ -89,7 +89,13 @@ func TestPostgresStore_Put_SameSHAPreservesID(t *testing.T) {
 	if err := s.Put(ctx, rec2); err != nil {
 		t.Fatalf("put2: %v", err)
 	}
-	got, _ := s.Get(ctx, rec1.Owner, rec1.Repo, rec1.PRNumber, rec1.HeadSHA)
+	got, err := s.Get(ctx, rec1.Owner, rec1.Repo, rec1.PRNumber, rec1.HeadSHA)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got == nil {
+		t.Fatalf("get miss; want record")
+	}
 	if got.ID != rec1.ID {
 		t.Errorf("ON CONFLICT 应保留原 ID, got=%s want=%s", got.ID, rec1.ID)
 	}
@@ -107,8 +113,12 @@ func TestPostgresStore_List_OrdersByCreatedAtDesc(t *testing.T) {
 	r2 := pgSampleRecord("sha-new")
 	r2.CreatedAt = time.Unix(2000, 0).UTC()
 	r2.HeadSHA = "sha-new"
-	_ = s.Put(ctx, r1)
-	_ = s.Put(ctx, r2)
+	if err := s.Put(ctx, r1); err != nil {
+		t.Fatalf("put r1: %v", err)
+	}
+	if err := s.Put(ctx, r2); err != nil {
+		t.Fatalf("put r2: %v", err)
+	}
 	list, err := s.List(ctx, nil, 10)
 	if err != nil {
 		t.Fatalf("list: %v", err)
