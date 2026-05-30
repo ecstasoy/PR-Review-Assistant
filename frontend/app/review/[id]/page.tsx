@@ -286,7 +286,7 @@ function ReviewDetailPageContent({ id }: { id: string }) {
                 risks={risks}
                 suggestions={suggestions}
                 summary={summary}
-                hasFiles={files.length > 0}
+                hasFiles={!streaming || files.length > 0}
                 risksDone={risksDone}
                 suggestionsDone={suggestionsDone}
                 streaming={streaming}
@@ -390,4 +390,3 @@ function LoadingState() {
     </p>
   );
 }
-

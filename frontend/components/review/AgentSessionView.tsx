@@ -61,8 +61,8 @@ export function AgentSessionView({
     return [
       "done", // parse 总是已完成（页面渲染时一定有 pr）
       hasFiles ? "done" : streaming ? "running" : "pending",
-      hasSummary ? "done" : hasFiles ? "running" : "pending",
-      suggestionsDone ? "done" : hasSummary ? "running" : "pending",
+      hasSummary ? "done" : hasFiles && streaming ? "running" : "pending",
+      suggestionsDone ? "done" : hasSummary && streaming ? "running" : "pending",
       !streaming && suggestionsDone ? "done" : "pending",
     ];
   }, [streaming, hasFiles, summary, risksDone, suggestionsDone]);
@@ -152,7 +152,7 @@ export function AgentSessionView({
 
           {finished ? (
             <FinalCard pr={pr} risks={risks} suggestions={suggestions} />
-          ) : (
+          ) : streaming ? (
             <div className="flex items-center gap-2 pl-[38px] text-sm text-muted">
               <span className="flex gap-1">
                 {[0, 1, 2].map((i) => (
@@ -165,6 +165,8 @@ export function AgentSessionView({
               </span>
               Agent 正在工作…
             </div>
+          ) : (
+            <div className="pl-[38px] text-sm text-muted">流程已结束，未生成完整结果。</div>
           )}
         </div>
       </div>
@@ -320,8 +322,8 @@ interface BudgetItem {
 function estimateBudget(_pr: PrMeta, files: File[]): { items: BudgetItem[]; total: number } {
   // 粗估：L2 = patch 字节数 / 3（与后端 estimateTokens 同算法）；L1/L3 用固定值
   let patchChars = 0;
-  for (const f of files) patchChars += f.patch?.length ?? 0;
-  const l2 = Math.max(200, Math.round(patchChars / 3));
+  for (const f of files) patchChars += Array.from(f.patch ?? "").length;
+  const l2 = Math.max(200, Math.ceil((patchChars + 2) / 3));
   const l1 = 400 + files.length * 30; // meta + per-file summary
   const l3 = Math.min(1600, Math.round((l1 + l2) / 12)); // 约 4:5:1 中 L3 那份
   const items: BudgetItem[] = [
@@ -394,14 +396,14 @@ function LlmDetail({
   // 三泳道：summary / risks / suggestions
   // 状态：running 期间未完成 → "running"；完成 → "done"；上游未启 → "pending"
   const stage = (done: boolean, started: boolean): StepStatus =>
-    done ? "done" : started ? "running" : "pending";
+    done ? "done" : started && streaming ? "running" : "pending";
   const summaryStage: StepStatus =
-    summary && (risksDone || !streaming) ? "done" : hasSummary ? "running" : "pending";
+    summary && (risksDone || !streaming) ? "done" : hasSummary && streaming ? "running" : "pending";
   return (
     <ToolCard
       label={
         <>
-          <Sparkle className="h-3 w-3" fill="currentColor" /> fan-out · 3 阶段并行（不共享上下文，降低相互污染）
+          <Sparkle className="h-3 w-3" fill="currentColor" /> fan-out · 3 阶段流水（不共享上下文，降低相互污染）
         </>
       }
     >
@@ -571,7 +573,7 @@ function SteerComposer({ pr }: { pr: PrMeta }) {
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 send();
               }
@@ -584,6 +586,8 @@ function SteerComposer({ pr }: { pr: PrMeta }) {
             type="button"
             onClick={send}
             disabled={!text.trim()}
+            aria-label="发送引导"
+            title="发送引导"
             className="inline-flex h-[30px] items-center rounded-md bg-accent px-2.5 text-accent-fg hover:opacity-90 disabled:opacity-50"
           >
             <Send className="h-3.5 w-3.5" />
