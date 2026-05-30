@@ -131,6 +131,14 @@ export interface ReviewResult {
   suggestions?: Suggestion[];
 }
 
+// AgentToolCall agent loop 单次工具调用（与后端 SSE tool_call_start/done 帧 data 字段对应）
+export interface AgentToolCall {
+  id: string;
+  name: string;
+  arguments?: string; // start 帧含；done 帧不重复
+  result?: string;    // done 帧含；含 "error: ..." 字符串
+}
+
 export type EventType =
   | "summary_delta"
   | "risks_done"
@@ -139,6 +147,9 @@ export type EventType =
   | "steered_suggestions_done"
   | "files"
   | "budget_report"
+  | "tool_call_start"
+  | "tool_call_done"
+  | "agent_text_delta"
   | "info"
   | "error"
   | "done";

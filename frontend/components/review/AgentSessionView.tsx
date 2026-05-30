@@ -12,9 +12,17 @@ import {
   MessageSquare,
   Send,
   Sparkle,
+  Wrench,
 } from "lucide-react";
 
-import type { BudgetReport, File, PrMeta, Risk, Suggestion } from "@/lib/types";
+import type {
+  AgentToolCall,
+  BudgetReport,
+  File,
+  PrMeta,
+  Risk,
+  Suggestion,
+} from "@/lib/types";
 import { streamSteer } from "@/lib/sse";
 import { cn } from "@/lib/utils";
 import { FileStatusBadge } from "@/components/ui/file-status-badge";
@@ -50,6 +58,60 @@ interface Props {
   reviewId?: string;
   onSteeredRisks?: (risks: Risk[]) => void;
   onSteeredSuggestions?: (suggestions: Suggestion[]) => void;
+  // Agent loop tool 调用事件（A3 后端 emit tool_call_start/done）
+  // 按 id 已合并 start/done，状态从 running → done/error；从父级 state 流下来
+  toolEvents?: ToolEvent[];
+}
+
+// ToolEvent agent loop 单次工具调用的合并状态
+export interface ToolEvent {
+  id: string;
+  name: string;
+  arguments?: string;
+  result?: string;
+  status: "running" | "done" | "error";
+}
+
+// MergeToolEvent 给 page.tsx 复用：根据 tool_call_start / done 帧累积 ToolEvent[]
+// 父组件用 reducer 累积，子组件只渲染。
+export function mergeToolStart(prev: ToolEvent[], call: AgentToolCall): ToolEvent[] {
+  // 同 id 二次 start 应该不会发生；防御性覆盖
+  const idx = prev.findIndex((e) => e.id === call.id);
+  const next: ToolEvent = {
+    id: call.id,
+    name: call.name,
+    arguments: call.arguments,
+    status: "running",
+  };
+  if (idx >= 0) {
+    const copy = [...prev];
+    copy[idx] = next;
+    return copy;
+  }
+  return [...prev, next];
+}
+
+export function mergeToolDone(prev: ToolEvent[], call: AgentToolCall): ToolEvent[] {
+  const idx = prev.findIndex((e) => e.id === call.id);
+  if (idx < 0) {
+    // 没见过 start 也兼容（理论不应发生）：直接当 done 插入
+    return [
+      ...prev,
+      {
+        id: call.id,
+        name: call.name,
+        result: call.result,
+        status: call.result?.startsWith("error:") ? "error" : "done",
+      },
+    ];
+  }
+  const copy = [...prev];
+  copy[idx] = {
+    ...copy[idx],
+    result: call.result,
+    status: call.result?.startsWith("error:") ? "error" : "done",
+  };
+  return copy;
 }
 
 // AgentSessionView 会话视图：把评审流程显示为 5 步 agent 时间线。
@@ -69,6 +131,7 @@ export function AgentSessionView({
   reviewId,
   onSteeredRisks,
   onSteeredSuggestions,
+  toolEvents,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -143,7 +206,7 @@ export function AgentSessionView({
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [statuses, finished]);
+  }, [statuses, finished, (toolEvents ?? []).length]);
 
   // budget 优先用后端真值（SSE budget_report / cached detail）；缺失时回退到 patch-bytes 粗估
   const budgetView = useMemo(
@@ -213,6 +276,18 @@ export function AgentSessionView({
               streaming={streaming}
             />
           </Step>
+          {(toolEvents ?? []).map((evt) => (
+            <Step
+              key={evt.id}
+              icon={<Wrench className="h-3.5 w-3.5" />}
+              title={`调用 ${evt.name}`}
+              status={evt.status}
+              meta={toolMeta(evt)}
+            >
+              <ToolEventDetail evt={evt} />
+            </Step>
+          ))}
+
           <Step
             icon={<HistoryIcon className="h-3.5 w-3.5" />}
             title="写入缓存"
@@ -290,6 +365,47 @@ function SteerDetail({ entry }: { entry: SteerEntry }) {
           已替换 {entry.stage === "risks" ? "风险" : "建议"} 列表 · 共 {entry.resultCount ?? 0} 项
         </p>
       ) : null}
+    </ToolCard>
+  );
+}
+
+// toolMeta agent 工具调用步骤右侧 meta 文本
+function toolMeta(evt: ToolEvent): string {
+  if (evt.status === "running") return "运行中";
+  if (evt.status === "error") return "失败";
+  const len = evt.result?.length ?? 0;
+  if (len > 1000) return `${(len / 1000).toFixed(1)}K chars`;
+  return `${len} chars`;
+}
+
+// ToolEventDetail 工具调用详情卡：参数 + 结果预览（result 长时截断）
+function ToolEventDetail({ evt }: { evt: ToolEvent }) {
+  const argsPreview = evt.arguments?.slice(0, 200) ?? "";
+  const result = evt.result ?? "";
+  const resultPreview = result.slice(0, 600);
+  const truncated = result.length > 600;
+  return (
+    <ToolCard
+      label={
+        <>
+          <Wrench className="h-3 w-3" />
+          {evt.name}
+          {evt.arguments ? (
+            <span className="ml-2 font-mono text-faint">args: {argsPreview}</span>
+          ) : null}
+        </>
+      }
+    >
+      {evt.status === "running" ? (
+        <p className="text-xs text-muted">执行中…</p>
+      ) : evt.status === "error" ? (
+        <p className="text-[11px] text-high">{result}</p>
+      ) : (
+        <pre className="whitespace-pre-wrap text-[11px] leading-snug text-text-2">
+          {resultPreview}
+          {truncated ? `\n…（已截断 ${result.length - 600} 字）` : ""}
+        </pre>
+      )}
     </ToolCard>
   );
 }

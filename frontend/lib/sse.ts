@@ -1,4 +1,11 @@
-import type { BudgetReport, File, PrMeta, Risk, Suggestion } from "./types";
+import type {
+  AgentToolCall,
+  BudgetReport,
+  File,
+  PrMeta,
+  Risk,
+  Suggestion,
+} from "./types";
 
 // 重导出方便老消费者继续 import 自此处；新代码请直接从 ./types 取
 export type { PrMeta } from "./types";
@@ -12,6 +19,10 @@ export interface StreamCallbacks {
   onSuggestionsDone?: (suggestions: Suggestion[]) => void;
   onSteeredRisks?: (risks: Risk[]) => void;
   onSteeredSuggestions?: (suggestions: Suggestion[]) => void;
+  // agent loop（A3 后端 emit）
+  onToolCallStart?: (call: AgentToolCall) => void;
+  onToolCallDone?: (call: AgentToolCall) => void;
+  onAgentTextDelta?: (delta: string) => void;
   onInfo?: (message: string) => void;
   onStageError?: (stage: string, message: string) => void;
   onStageDone?: (stage: string) => void;
@@ -146,6 +157,17 @@ function dispatch(ev: ParsedFrame, cb: StreamCallbacks): void {
     case "steered_suggestions_done":
       cb.onSteeredSuggestions?.(parsed as Suggestion[]);
       break;
+    case "tool_call_start":
+      cb.onToolCallStart?.(parsed as AgentToolCall);
+      break;
+    case "tool_call_done":
+      cb.onToolCallDone?.(parsed as AgentToolCall);
+      break;
+    case "agent_text_delta": {
+      const p = parsed as { delta?: string };
+      if (p.delta) cb.onAgentTextDelta?.(p.delta);
+      break;
+    }
     case "info": {
       const p = parsed as { message?: string };
       if (p.message) cb.onInfo?.(p.message);
