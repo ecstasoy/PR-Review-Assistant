@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 
 import type { File, PrMeta, Risk, Suggestion } from "@/lib/types";
+import { streamSteer } from "@/lib/sse";
 import { cn } from "@/lib/utils";
 import { FileStatusBadge } from "@/components/ui/file-status-badge";
 import { SeverityBadge } from "@/components/ui/badge";
@@ -32,6 +33,10 @@ interface Props {
   risksDone: boolean;
   suggestionsDone: boolean;
   streaming: boolean;
+  // Steer：cached 模式才有 reviewId；streaming 模式 undefined，SteerComposer 禁用
+  reviewId?: string;
+  onSteeredRisks?: (risks: Risk[]) => void;
+  onSteeredSuggestions?: (suggestions: Suggestion[]) => void;
 }
 
 // AgentSessionView 会话视图：把评审流程显示为 5 步 agent 时间线。
@@ -47,6 +52,9 @@ export function AgentSessionView({
   risksDone,
   suggestionsDone,
   streaming,
+  reviewId,
+  onSteeredRisks,
+  onSteeredSuggestions,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -168,7 +176,12 @@ export function AgentSessionView({
           )}
         </div>
       </div>
-      <SteerComposer pr={pr} />
+      <SteerComposer
+        pr={pr}
+        reviewId={reviewId}
+        onSteeredRisks={onSteeredRisks}
+        onSteeredSuggestions={onSteeredSuggestions}
+      />
     </div>
   );
 }
@@ -530,16 +543,43 @@ function FinalCard({
   );
 }
 
-// SteerComposer 底部"引导"输入条；v1 接收输入但不真发后端（agent 接口在 v2）。
-function SteerComposer({ pr }: { pr: PrMeta }) {
+// SteerComposer 底部「引导」输入条；接 POST /api/review/:id/steer。
+// reviewId 缺失（streaming 模式）→ 禁用 + 提示「等流式完成后可引导」
+function SteerComposer({
+  pr,
+  reviewId,
+  onSteeredRisks,
+  onSteeredSuggestions,
+}: {
+  pr: PrMeta;
+  reviewId?: string;
+  onSteeredRisks?: (risks: Risk[]) => void;
+  onSteeredSuggestions?: (suggestions: Suggestion[]) => void;
+}) {
   const [text, setText] = useState("");
+  const [stage, setStage] = useState<"risks" | "suggestions">("risks");
+  const [inFlight, setInFlight] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const githubURL = `https://github.com/${pr.owner}/${pr.repo}/pull/${pr.pr}`;
+  const enabled = !!reviewId && !inFlight;
 
-  function send() {
+  async function send() {
     const v = text.trim();
-    if (!v) return;
-    // v1 占位：清空输入；v2 接 agent 端点真实发引导
-    setText("");
+    if (!v || !reviewId || inFlight) return;
+    setInFlight(true);
+    setError(null);
+    try {
+      await streamSteer(reviewId, v, stage, {
+        onSteeredRisks: (r) => onSteeredRisks?.(r),
+        onSteeredSuggestions: (s) => onSteeredSuggestions?.(s),
+        onStageError: (_s, msg) => setError(msg),
+      });
+      setText("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setInFlight(false);
+    }
   }
 
   return (
@@ -556,6 +596,21 @@ function SteerComposer({ pr }: { pr: PrMeta }) {
               </>
             ) : null}
           </span>
+          <div className="flex gap-[3px] rounded-md border border-border bg-surface-2 p-[2px]">
+            {(["risks", "suggestions"] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setStage(s)}
+                className={cn(
+                  "rounded-sm px-2 py-[3px] font-mono text-[10.5px] transition-colors",
+                  stage === s ? "bg-surface text-text" : "text-muted hover:text-text",
+                )}
+              >
+                {s === "risks" ? "重评风险" : "重出建议"}
+              </button>
+            ))}
+          </div>
           <a
             href={githubURL}
             target="_blank"
@@ -566,10 +621,16 @@ function SteerComposer({ pr }: { pr: PrMeta }) {
             查看 PR
           </a>
         </div>
-        <div className="flex items-end gap-2 rounded-lg border border-border-strong bg-surface p-1.5 shadow-sm">
+        <div
+          className={cn(
+            "flex items-end gap-2 rounded-lg border bg-surface p-1.5 shadow-sm",
+            enabled ? "border-border-strong" : "border-border",
+          )}
+        >
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
+            disabled={!enabled}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
@@ -577,18 +638,25 @@ function SteerComposer({ pr }: { pr: PrMeta }) {
               }
             }}
             rows={1}
-            placeholder="在 agent 运行时引导（例如：重点看并发安全 / 忽略 style 类问题）…"
-            className="max-h-[120px] min-w-0 flex-1 resize-none border-none bg-transparent px-1.5 py-1.5 text-sm leading-snug text-text outline-none placeholder:text-faint"
+            placeholder={
+              reviewId
+                ? `引导 agent ${stage === "risks" ? "重评风险" : "重出建议"}（例：重点看并发安全 / 忽略 style 类问题）…`
+                : "流式评审完成后可在此引导 agent"
+            }
+            className="max-h-[120px] min-w-0 flex-1 resize-none border-none bg-transparent px-1.5 py-1.5 text-sm leading-snug text-text outline-none placeholder:text-faint disabled:cursor-not-allowed"
           />
           <button
             type="button"
             onClick={send}
-            disabled={!text.trim()}
+            disabled={!enabled || !text.trim()}
             className="inline-flex h-[30px] items-center rounded-md bg-accent px-2.5 text-accent-fg hover:opacity-90 disabled:opacity-50"
           >
-            <Send className="h-3.5 w-3.5" />
+            {inFlight ? <Spinner size="xs" className="text-accent-fg" /> : <Send className="h-3.5 w-3.5" />}
           </button>
         </div>
+        {error ? (
+          <p className="mt-1 text-[10.5px] text-high">引导失败：{error}</p>
+        ) : null}
       </div>
     </div>
   );
