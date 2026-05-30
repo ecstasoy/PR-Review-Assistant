@@ -194,6 +194,7 @@ func (r *SQLiteRetriever) Retrieve(ctx context.Context, scope, query string, k i
 			Snippet:  h.content,
 			Reason:   fmt.Sprintf("cosine=%.3f", h.score),
 			PRNumber: h.prNumber,
+			Score:    h.score,
 		})
 	}
 	return out, nil

@@ -25,8 +25,36 @@ import (
 // embedding API 多数模型上限 8192 token≈30K 字符，留余量
 const indexMaxChunkChars = 8000
 
-// indexPRChunks 把本次 PR 的 file patches 转 chunks 同步写索引
+// splitPatchToHunks 把 unified diff patch 按 `@@ ` hunk 头切成独立片段；每片以 @@ 开头
+// 没 @@ 头时（罕见：合并后的预处理）退回整 patch 作单 hunk
+// 召回粒度从"一文件一 chunk"细化到"一 hunk 一 chunk"，让 cosine 分更准（噪音少）
+func splitPatchToHunks(patch string) []string {
+	if !strings.Contains(patch, "@@ ") {
+		// fallback：当作单 hunk；空 patch 由 caller 提前 skip
+		if strings.TrimSpace(patch) == "" {
+			return nil
+		}
+		return []string{patch}
+	}
+	var hunks []string
+	var cur strings.Builder
+	for _, line := range strings.Split(patch, "\n") {
+		if strings.HasPrefix(line, "@@ ") && cur.Len() > 0 {
+			hunks = append(hunks, strings.TrimRight(cur.String(), "\n"))
+			cur.Reset()
+		}
+		cur.WriteString(line)
+		cur.WriteByte('\n')
+	}
+	if cur.Len() > 0 {
+		hunks = append(hunks, strings.TrimRight(cur.String(), "\n"))
+	}
+	return hunks
+}
+
+// indexPRChunks 把本次 PR 的 file patches 按 hunk 切 chunk 同步写索引
 // scope = "owner/repo"；同 (scope,path,idx) ON CONFLICT 覆盖 → 重复评同 PR 不会重复 embed
+// idx = 同 path 下 hunk 序号（从 0 开始），让多 hunk 文件不互相覆盖
 // 失败仅 warn 不阻断评审；NoopIndexer 直接 no-op 无 API 调用
 func indexPRChunks(ctx context.Context, idx index.Indexer, pr gh.PullRequest) {
 	if _, isNoop := idx.(index.NoopIndexer); isNoop {
@@ -34,14 +62,21 @@ func indexPRChunks(ctx context.Context, idx index.Indexer, pr gh.PullRequest) {
 	}
 	chunks := make([]index.IndexerChunk, 0, len(pr.Files))
 	for _, f := range pr.Files {
-		content := f.Patch
-		if content == "" {
+		if f.Patch == "" {
 			continue
 		}
-		if len(content) > indexMaxChunkChars {
-			content = content[:indexMaxChunkChars]
+		for hi, hunk := range splitPatchToHunks(f.Patch) {
+			content := hunk
+			if len(content) > indexMaxChunkChars {
+				content = content[:indexMaxChunkChars]
+			}
+			chunks = append(chunks, index.IndexerChunk{
+				Path:     f.Path,
+				Idx:      hi,
+				Content:  content,
+				PRNumber: pr.Number,
+			})
 		}
-		chunks = append(chunks, index.IndexerChunk{Path: f.Path, Idx: 0, Content: content, PRNumber: pr.Number})
 	}
 	if len(chunks) == 0 {
 		return
@@ -51,7 +86,7 @@ func indexPRChunks(ctx context.Context, idx index.Indexer, pr gh.PullRequest) {
 		slog.Warn("index PR chunks failed; review proceeds without fresh L4", "scope", scope, "err", err)
 		return
 	}
-	slog.Info("indexed PR chunks", "scope", scope, "chunks", len(chunks))
+	slog.Info("indexed PR chunks", "scope", scope, "files", len(pr.Files), "chunks", len(chunks))
 }
 
 // PostReview 接收 { url }，先用 JSON 处理预检错误；
@@ -152,7 +187,10 @@ func PostReview(d Deps) gin.HandlerFunc {
 		// 在跑 LLM 前发预算帧，让前端会话视图可以立刻把上下文步骤切到"已完成"+显示真实 L1/L2/L3/L4
 		writeSSE(c.Writer, "budget_report", budget)
 		c.Writer.Flush()
-		merged := mergeStages(ctx, pCtx, d.Provider)
+		// per-stage RAG query：risks/suggestions 重算 L4（用不同 query），summary 用 baseCtx
+		// 多两次 retrieve 调用换更对题的召回；首字节延迟代价 < 200ms
+		ctxByStage := buildPerStageContexts(ctx, builder, pr, pCtx)
+		merged := mergeStages(ctx, ctxByStage, d.Provider)
 
 		// 边推流边收集供后续 cache 写入；stage 任一报错则不写缓存（避免缓存半残结果）
 		var (
@@ -283,9 +321,67 @@ func persistReview(s store.Store, pr gh.PullRequest, summary string, risks, sugg
 	}
 }
 
+// stageRAGQueryFor 不同 stage 用不同 RAG query；空返回 = caller fallback 到默认 L1Meta。
+// 设计：
+//   - summary 看的是全局摘要，PR meta 已经够好；不覆盖
+//   - risks 关注 bug/race/security，query 引导召回相关风险代码
+//   - suggestions 关注重构/优化，query 引导召回相关 patterns
+func stageRAGQueryFor(name string, pr gh.PullRequest) string {
+	switch name {
+	case "risks":
+		return "潜在 bug / 并发 race / 安全漏洞 / 资源泄漏 / 错误处理缺失，相关文件：" + summarizePRFiles(pr.Files)
+	case "suggestions":
+		return "重构机会 / 代码改进 / 性能优化 / 可读性提升 / 设计模式，相关文件：" + summarizePRFiles(pr.Files)
+	default:
+		return ""
+	}
+}
+
+// summarizePRFiles 把改动文件 path 压成一行短串作 RAG query 后缀；只取前 8 个免过长
+func summarizePRFiles(files []gh.File) string {
+	const maxN = 8
+	paths := make([]string, 0, maxN)
+	for i, f := range files {
+		if i >= maxN {
+			break
+		}
+		paths = append(paths, f.Path)
+	}
+	return strings.Join(paths, ", ")
+}
+
+// buildPerStageContexts 为每个 stage 准备 prctx.Context；summary 直接复用 base，risks/suggestions 用各自 query 重算
+// 重算失败时回退 base —— RAG 错误不应阻断评审
+func buildPerStageContexts(
+	ctx context.Context,
+	builder prctx.Builder,
+	pr gh.PullRequest,
+	base prctx.Context,
+) map[string]prctx.Context {
+	out := map[string]prctx.Context{
+		"summary": base,
+	}
+	for _, name := range []string{"risks", "suggestions"} {
+		q := stageRAGQueryFor(name, pr)
+		if q == "" {
+			out[name] = base
+			continue
+		}
+		stageCtx, err := builder.BuildWith(ctx, pr, prctx.BuildOptions{RAGQuery: q})
+		if err != nil {
+			slog.Warn("per-stage prctx build failed; falling back to base", "stage", name, "err", err)
+			out[name] = base
+			continue
+		}
+		out[name] = stageCtx
+	}
+	return out
+}
+
 // mergeStages 并发跑 summary + risks + suggestions，把各自的事件归并到一个 channel。
 // 任一 stage 失败会发一帧 error event 而非中止整条流。
-func mergeStages(ctx context.Context, c prctx.Context, p llm.Provider) <-chan review.Event {
+// ctxByStage 按 Stage.Name() 选 prctx.Context；缺失 key 回退到 ctxByStage["summary"]
+func mergeStages(ctx context.Context, ctxByStage map[string]prctx.Context, p llm.Provider) <-chan review.Event {
 	merged := make(chan review.Event, 16)
 	var wg sync.WaitGroup
 
@@ -294,8 +390,13 @@ func mergeStages(ctx context.Context, c prctx.Context, p llm.Provider) <-chan re
 		review.RisksStage{},
 		review.SuggestionsStage{},
 	}
+	fallback := ctxByStage["summary"]
 	wg.Add(len(stages))
 	for _, s := range stages {
+		c, ok := ctxByStage[s.Name()]
+		if !ok {
+			c = fallback
+		}
 		go forwardStage(ctx, c, p, s, merged, &wg)
 	}
 

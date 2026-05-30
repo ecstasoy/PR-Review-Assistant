@@ -6,7 +6,17 @@ import (
 	"testing"
 
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/github"
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/index"
 )
+
+// stubRetriever 受控返回预设 References；用于测 L4 过滤逻辑（阈值 + 去重）
+type stubRetriever struct {
+	refs []index.Reference
+}
+
+func (s stubRetriever) Retrieve(_ context.Context, _, _ string, _ int) ([]index.Reference, error) {
+	return s.refs, nil
+}
 
 func newPR(files []github.File) github.PullRequest {
 	return github.PullRequest{
@@ -152,6 +162,52 @@ func TestLayered_BudgetReport(t *testing.T) {
 	}
 	if len(r.Dropped) != 0 {
 		t.Errorf("无丢弃时 Dropped 应空: %v", r.Dropped)
+	}
+}
+
+// TestLayered_L4_ScoreThresholdDrops 验证 cosine < defaultRAGScoreThreshold 的召回不入 L4
+func TestLayered_L4_ScoreThresholdDrops(t *testing.T) {
+	b := NewLayeredBuilder(WithRetriever(stubRetriever{refs: []index.Reference{
+		{File: "other.go", Snippet: "good match", Score: 0.8, PRNumber: 76},
+		{File: "noise.go", Snippet: "bad match", Score: 0.3, PRNumber: 99},  // 应被阈值过滤
+		{File: "weak.go", Snippet: "weak match", Score: 0.45, PRNumber: 88}, // 应被阈值过滤
+	}}))
+	pr := newPR([]github.File{{Path: "a.go", Patch: "small"}})
+	ctx, err := b.Build(context.Background(), pr)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(ctx.L4References) != 1 {
+		t.Fatalf("expected 1 ref above threshold, got %d", len(ctx.L4References))
+	}
+	if ctx.L4References[0].File != "other.go" {
+		t.Errorf("expected other.go, got %s", ctx.L4References[0].File)
+	}
+	if ctx.L4References[0].PRNumber != 76 {
+		t.Errorf("PRNumber 未保留: %d", ctx.L4References[0].PRNumber)
+	}
+}
+
+// TestLayered_L4_DedupesL2Paths 验证 L4 召回的 path 若已在 L2 出现则跳过
+func TestLayered_L4_DedupesL2Paths(t *testing.T) {
+	b := NewLayeredBuilder(WithRetriever(stubRetriever{refs: []index.Reference{
+		{File: "a.go", Snippet: "from same PR", Score: 0.9, PRNumber: 42},  // 应被 L2 去重过滤
+		{File: "other.go", Snippet: "cross-file", Score: 0.7, PRNumber: 76}, // 保留
+	}}))
+	pr := newPR([]github.File{
+		{Path: "a.go", Patch: "this is in L2"}, // 同 path 会进 L2
+	})
+	ctx, err := b.Build(context.Background(), pr)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	for _, ref := range ctx.L4References {
+		if ref.File == "a.go" {
+			t.Errorf("L4 不应含 L2 已有的 path: %s", ref.File)
+		}
+	}
+	if len(ctx.L4References) != 1 || ctx.L4References[0].File != "other.go" {
+		t.Errorf("expected only other.go in L4, got %+v", ctx.L4References)
 	}
 }
 

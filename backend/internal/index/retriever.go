@@ -6,10 +6,11 @@ import "context"
 
 // Reference 一条检索到的代码片段，作为 L4 上下文注入 prompt。
 type Reference struct {
-	File     string // 源文件路径
-	Snippet  string // 检索命中的代码 / 文档片段
-	Reason   string // 为什么命中（"defines X" / "calls Y" / "cosine=0.83"）
-	PRNumber int    // 这条片段来自哪个 PR（0 = 未知 / 旧索引）；让 LLM 能说"PR #76 改过 X"
+	File     string  // 源文件路径
+	Snippet  string  // 检索命中的代码 / 文档片段
+	Reason   string  // 为什么命中（"defines X" / "calls Y" / "cosine=0.83"）
+	PRNumber int     // 这条片段来自哪个 PR（0 = 未知 / 旧索引）；让 LLM 能说"PR #76 改过 X"
+	Score    float32 // cosine 相似度 [0, 1]；让 caller 按阈值过滤低质量召回
 }
 
 // Retriever 按 scope + query 召回最多 k 条 Reference。
