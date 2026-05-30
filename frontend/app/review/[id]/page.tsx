@@ -1,11 +1,12 @@
 "use client";
 
-import { Suspense, use, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { getReview } from "@/lib/api";
-import type { File, PrMeta, Risk, ReviewDetail } from "@/lib/types";
+import { streamReview } from "@/lib/sse";
+import type { File, PrMeta, Risk, ReviewDetail, Suggestion } from "@/lib/types";
 import { ReviewTopBar, type ViewKey } from "@/components/review/ReviewTopBar";
 import { Sidebar } from "@/components/review/Sidebar";
 import { SummaryCard } from "@/components/review/SummaryCard";
@@ -13,18 +14,21 @@ import { RisksList } from "@/components/review/RisksList";
 import { DiffView } from "@/components/review/DiffView";
 import { AgentPanel } from "@/components/review/AgentPanel";
 import { Spinner } from "@/components/ui/spinner";
+import type { StageState } from "@/components/review/StageChip";
 
 interface PageProps {
   params: Promise<{ id: string }>;
 }
 
+type StageErrors = Partial<Record<"context" | "summary" | "risks" | "suggestions", string>>;
+
 const VALID_VIEWS: ViewKey[] = ["report", "diff", "session"];
 
-// /review/[id] 评审结果页（cached-only）。
-// 严格按 design 原型 ReviewResult.jsx：全宽 dashboard，顶 ReviewTopBar，
-// 左 Sidebar（可折叠），中主区（max-w 1080），右 AgentPanel（可 toggle）。
-// view 通过 ?view= 切换：报告 / Diff / 会话；cached 模式 stage 全 done。
-// 跨视图跳转：点 Sidebar 文件 / 风险 → 切到 Diff 视图 + scrollTop 定位锚点行。
+// /review/[id] 评审结果页。两种模式：
+// - id === "streaming" + ?url= → 实时 SSE 流式（landing submit 后跳进来）
+// - id 是 ULID → cached 模式，调 getReview 拉详情
+// 两种模式共享同一套 UI（顶栏 / Sidebar / 主区 / Agent dock）；StageChips 在流式时按事件推进，
+// 在 cached 模式全 done。
 export default function ReviewDetailPage({ params }: PageProps) {
   const { id } = use(params);
   return (
@@ -42,33 +46,117 @@ function ReviewDetailPageContent({ id }: { id: string }) {
   const view: ViewKey =
     viewParam && VALID_VIEWS.includes(viewParam) ? viewParam : "report";
 
-  const [detail, setDetail] = useState<ReviewDetail | null>(null);
+  const isStreaming = id === "streaming";
+  const sourceURL = searchParams.get("url");
+
+  // 统一状态形状：cached 模式一次填齐，streaming 模式逐步填
+  const [pr, setPr] = useState<PrMeta | null>(null);
+  const [summary, setSummary] = useState("");
+  const [risks, setRisks] = useState<Risk[]>([]);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [files, setFiles] = useState<File[]>([]);
+  const [risksDone, setRisksDone] = useState(false);
+  const [suggestionsDone, setSuggestionsDone] = useState(false);
+  const [streaming, setStreaming] = useState(isStreaming);
+  const [info, setInfo] = useState<string | null>(null);
+  const [stageErrors, setStageErrors] = useState<StageErrors>({});
   const [error, setError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
   const [agentOpen, setAgentOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeFile, setActiveFile] = useState<string | undefined>(undefined);
   const [expandRequest, setExpandRequest] = useState<{ path: string; nonce: number } | null>(null);
 
   const scrollRef = useRef<HTMLElement>(null);
-  // 切到 Diff 视图前记下要滚的锚；视图挂载后 useEffect 消费
   const pendingScroll = useRef<string | null>(null);
 
+  // 拉数据：cached 模式 getReview；streaming 模式 streamReview
   useEffect(() => {
     let cancelled = false;
-    getReview(id)
-      .then((d) => {
-        if (!cancelled) setDetail(d);
+    if (isStreaming) {
+      if (!sourceURL) {
+        setError("缺少 url 参数");
+        setLoaded(true);
+        return;
+      }
+      streamReview(decodeURIComponent(sourceURL), {
+        onPr: (p) => !cancelled && (setPr(p), setLoaded(true)),
+        onFiles: (f) => !cancelled && setFiles(f),
+        onSummaryDelta: (d) => !cancelled && setSummary((s) => s + d),
+        onRisksDone: (r) => {
+          if (cancelled) return;
+          setRisks(r);
+          setRisksDone(true);
+        },
+        onSuggestionsDone: (s) => {
+          if (cancelled) return;
+          setSuggestions(s);
+          setSuggestionsDone(true);
+        },
+        onInfo: (m) => !cancelled && setInfo(m),
+        onStageError: (stage, msg) =>
+          !cancelled &&
+          setStageErrors((prev) => ({ ...prev, [stage]: msg })),
+        onDone: () => !cancelled && setStreaming(false),
       })
-      .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
-      });
+        .catch((e) => {
+          if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setStreaming(false);
+            setLoaded(true);
+          }
+        });
+    } else {
+      // cached
+      getReview(id)
+        .then((d) => {
+          if (cancelled) return;
+          hydrateFromDetail(d, {
+            setPr,
+            setSummary,
+            setRisks,
+            setSuggestions,
+            setFiles,
+            setRisksDone,
+            setSuggestionsDone,
+            setStreaming,
+          });
+          setLoaded(true);
+        })
+        .catch((e) => {
+          if (!cancelled) {
+            setError(e instanceof Error ? e.message : String(e));
+            setLoaded(true);
+          }
+        });
+    }
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, isStreaming, sourceURL]);
 
-  // scrollToAnchor 容器内手动 scrollTop 赋值（design README §6 明确不要 scrollIntoView）
-  // + 1.1s 闪烁背景突出目标行
+  // stage 状态机：基于 summary 是否有内容 / risksDone / suggestionsDone / streaming
+  const stageStates = useMemo<{
+    summary: StageState;
+    risks: StageState;
+    suggestions: StageState;
+  }>(() => {
+    if (!streaming) {
+      // 流式结束 / cached → 全部按 done 显示
+      return { summary: "done", risks: "done", suggestions: "done" };
+    }
+    const hasSummary = summary.length > 0;
+    return {
+      summary: hasSummary ? (risksDone ? "done" : "active") : "pending",
+      risks: risksDone ? "done" : hasSummary ? "active" : "pending",
+      suggestions: suggestionsDone ? "done" : risksDone ? "active" : "pending",
+    };
+  }, [streaming, summary, risksDone, suggestionsDone]);
+
+  // scrollTop 直接赋值定位锚点 + 1.1s 闪烁高亮（design README §6 要求）
   const scrollToAnchor = useCallback((anchorId: string) => {
     const cont = scrollRef.current;
     const el = document.getElementById(anchorId);
@@ -85,13 +173,11 @@ function ReviewDetailPageContent({ id }: { id: string }) {
     return true;
   }, []);
 
-  // 视图切到 Diff 时，flush 之前积压的滚动请求
   useEffect(() => {
     if (view !== "diff" || !pendingScroll.current) return;
     const anchorId = pendingScroll.current;
     let cancelled = false;
     let attempts = 0;
-
     const flush = () => {
       if (cancelled) return;
       if (scrollToAnchor(anchorId)) {
@@ -101,8 +187,6 @@ function ReviewDetailPageContent({ id }: { id: string }) {
       attempts += 1;
       if (attempts < 8) requestAnimationFrame(flush);
     };
-
-    // 等 DOM mount 完成
     requestAnimationFrame(flush);
     return () => {
       cancelled = true;
@@ -141,38 +225,18 @@ function ReviewDetailPageContent({ id }: { id: string }) {
       </section>
     );
   }
-  if (!detail) {
+
+  // streaming 模式：pr 事件未到时显加载占位，但顶栏不渲染（无 pr meta）
+  if (!loaded || !pr) {
     return <LoadingState />;
   }
-
-  const pr: PrMeta = {
-    id: detail.id,
-    owner: detail.owner,
-    repo: detail.repo,
-    pr: detail.pr,
-    url: `https://github.com/${detail.owner}/${detail.repo}/pull/${detail.pr}`,
-    head_sha: detail.head_sha,
-    title: detail.title ?? "",
-    author: detail.author,
-    author_role: detail.author_role,
-    state: detail.state,
-    labels: detail.labels,
-    base_ref: detail.base_ref,
-    head_ref: detail.head_ref,
-    pr_created_at: detail.pr_created_at,
-    stats: detail.stats,
-    ci: detail.ci,
-    checks: detail.checks,
-  };
-  const files: File[] = detail.files ?? [];
-  const risks: Risk[] = detail.risks ?? [];
 
   return (
     <div className="flex h-screen flex-col bg-bg">
       <ReviewTopBar
         pr={pr}
         view={view}
-        stageStates={{ summary: "done", risks: "done", suggestions: "done" }}
+        stageStates={stageStates}
         onSidebarToggle={() => setSidebarCollapsed((c) => !c)}
         onToggleAgent={() => setAgentOpen((o) => !o)}
         agentOpen={agentOpen}
@@ -190,16 +254,27 @@ function ReviewDetailPageContent({ id }: { id: string }) {
         ) : null}
         <main ref={scrollRef} className="min-w-0 flex-1 overflow-y-auto">
           <div className="mx-auto flex max-w-[1080px] flex-col gap-4 px-5 py-5">
+            {info ? (
+              <div className="rounded-md border border-border bg-surface-2 px-4 py-3 text-sm text-text-2">
+                {info}
+              </div>
+            ) : null}
+            {stageErrors.context ? (
+              <StageErrorBanner stage="上下文" message={stageErrors.context} />
+            ) : null}
             {view === "report" ? (
-              <>
-                <SummaryCard summary={detail.summary} />
-                {risks.length > 0 ? <RisksList risks={risks} /> : null}
-              </>
+              <ReportContent
+                summary={summary}
+                risks={risks}
+                risksDone={risksDone}
+                streaming={streaming}
+                stageErrors={stageErrors}
+              />
             ) : view === "diff" ? (
               <DiffView
                 files={files}
                 risks={risks}
-                suggestions={detail.suggestions}
+                suggestions={suggestions}
                 expandedFilePath={expandRequest?.path}
                 expandedFileNonce={expandRequest?.nonce}
               />
@@ -210,6 +285,89 @@ function ReviewDetailPageContent({ id }: { id: string }) {
         </main>
         {agentOpen ? <AgentPanel onClose={() => setAgentOpen(false)} /> : null}
       </div>
+    </div>
+  );
+}
+
+interface HydrateSetters {
+  setPr: (pr: PrMeta) => void;
+  setSummary: (s: string) => void;
+  setRisks: (r: Risk[]) => void;
+  setSuggestions: (s: Suggestion[]) => void;
+  setFiles: (f: File[]) => void;
+  setRisksDone: (b: boolean) => void;
+  setSuggestionsDone: (b: boolean) => void;
+  setStreaming: (b: boolean) => void;
+}
+
+// hydrateFromDetail 把 cached detail 一次填齐到所有 state
+function hydrateFromDetail(d: ReviewDetail, h: HydrateSetters) {
+  h.setPr({
+    id: d.id,
+    owner: d.owner,
+    repo: d.repo,
+    pr: d.pr,
+    url: `https://github.com/${d.owner}/${d.repo}/pull/${d.pr}`,
+    head_sha: d.head_sha,
+    title: d.title ?? "",
+    author: d.author,
+    author_role: d.author_role,
+    state: d.state,
+    labels: d.labels,
+    base_ref: d.base_ref,
+    head_ref: d.head_ref,
+    pr_created_at: d.pr_created_at,
+    stats: d.stats,
+    ci: d.ci,
+    checks: d.checks,
+  });
+  h.setSummary(d.summary ?? "");
+  h.setRisks(d.risks ?? []);
+  h.setSuggestions(d.suggestions ?? []);
+  h.setFiles(d.files ?? []);
+  h.setRisksDone(true);
+  h.setSuggestionsDone(true);
+  h.setStreaming(false);
+}
+
+function ReportContent({
+  summary,
+  risks,
+  risksDone,
+  streaming,
+  stageErrors,
+}: {
+  summary: string;
+  risks: Risk[];
+  risksDone: boolean;
+  streaming: boolean;
+  stageErrors: StageErrors;
+}) {
+  return (
+    <>
+      {stageErrors.summary ? (
+        <StageErrorBanner stage="总结" message={stageErrors.summary} />
+      ) : (
+        <SummaryCard summary={summary} streaming={streaming && !risksDone} />
+      )}
+      {stageErrors.risks ? (
+        <StageErrorBanner stage="风险" message={stageErrors.risks} />
+      ) : risks.length > 0 ? (
+        <RisksList risks={risks} />
+      ) : risksDone ? (
+        <p className="text-sm text-muted">未发现风险。</p>
+      ) : streaming ? (
+        <p className="text-sm text-faint">扫描风险中…</p>
+      ) : null}
+    </>
+  );
+}
+
+function StageErrorBanner({ stage, message }: { stage: string; message: string }) {
+  return (
+    <div className="rounded-md border border-high-bd bg-high-bg px-3 py-2 text-sm text-high">
+      <span className="font-medium">{stage}失败：</span>
+      {message}
     </div>
   );
 }
