@@ -107,34 +107,25 @@ export function AgentPanel({ onClose, reviewId }: Props) {
           onToolCallDone: (call) => {
             setMsgs((m) => {
               let found = false;
-              const next = m.map((msg) => {
+              const status: ToolMeta["status"] = call.result?.startsWith("error:") ? "error" : "done";
+              const next: Msg[] = m.map((msg) => {
                 if (msg.role === "tool" && msg.tool?.id === call.id) {
                   found = true;
                   return {
                     ...msg,
-                    tool: {
-                      ...msg.tool,
-                      result: call.result,
-                      status: call.result?.startsWith("error:") ? "error" : "done",
-                    },
+                    tool: { ...msg.tool, result: call.result, status },
                   };
                 }
                 return msg;
               });
               if (found) return next;
-              return [
-                ...next,
-                {
-                  role: "tool",
-                  text: call.name,
-                  tool: {
-                    id: call.id,
-                    name: call.name,
-                    result: call.result,
-                    status: call.result?.startsWith("error:") ? "error" : "done",
-                  },
-                },
-              ];
+              // 收到 done 但没对应 running 帧时，直接 push 一条终态消息
+              const fallback: Msg = {
+                role: "tool",
+                text: call.name,
+                tool: { id: call.id, name: call.name, result: call.result, status },
+              };
+              return [...next, fallback];
             });
           },
           onInfo: (info) => {
