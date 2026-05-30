@@ -13,11 +13,13 @@ import (
 // Deps 是路由 + handler 需要的所有依赖。
 // 在 main 构造一次，向下注入。
 // Store 可为 nil（关闭缓存 + 历史功能），handler 必须 nil-safe。
+// Cache 可为 nil（限流中间件降级 pass-through）；生产环境应注入 MemoryCache 或 RedisCache
 type Deps struct {
 	Fetcher  github.Fetcher
 	Provider llm.Provider
 	Builder  prctx.Builder
 	Store    store.Store
+	Cache    store.Cache
 }
 
 // Register 挂载 /api 路由组。
@@ -25,8 +27,8 @@ func Register(r *gin.Engine, d Deps) {
 	g := r.Group("/api")
 	g.Use(middleware.AuthCtx())
 
-	expensive := middleware.RateLimit(middleware.ExpensiveDefault)
-	read := middleware.RateLimit(middleware.ReadDefault)
+	expensive := middleware.RateLimit(d.Cache, middleware.ExpensiveDefault)
+	read := middleware.RateLimit(d.Cache, middleware.ReadDefault)
 
 	// /health 留为 liveness 别名（向后兼容 v1/v2 配置）
 	g.GET("/health", Health)
