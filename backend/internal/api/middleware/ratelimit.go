@@ -32,6 +32,7 @@ type RateLimitConfig struct {
 
 // 默认配置：对昂贵端点（/review、/steer 烧 LLM）保守限频，
 // 对读路径（/reviews / /reviews/:id）放宽，/health 不限。
+// 这些 fixed-window 默认值仅对齐平均吞吐，不与旧 token-bucket 的突发恢复语义等价。
 // 真部署阶段可从 env 注入；切 Redis 后跨实例共享。
 var (
 	// ExpensiveDefault 评审 + 引导：25 秒内最多 5 次（≈ 0.2 RPS）
