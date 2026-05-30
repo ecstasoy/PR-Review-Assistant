@@ -1,6 +1,7 @@
 package prctx
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -24,7 +25,7 @@ func TestLayered_BasicMeta(t *testing.T) {
 	pr := newPR([]github.File{
 		{Path: "a.go", Status: "modified", Patch: "@@ small @@", Additions: 1, Deletions: 1},
 	})
-	ctx, err := b.Build(pr)
+	ctx, err := b.Build(context.Background(), pr)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -46,7 +47,7 @@ func TestLayered_PatchesFitInBudget(t *testing.T) {
 		{Path: "a.go", Patch: strings.Repeat("a", 100)},
 		{Path: "b.go", Patch: strings.Repeat("b", 100)},
 	})
-	ctx, err := b.Build(pr)
+	ctx, err := b.Build(context.Background(), pr)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -65,7 +66,7 @@ func TestLayered_DropsLargeFiles(t *testing.T) {
 		{Path: "small.go", Patch: strings.Repeat("a", 100)},  // ~33 tokens
 		{Path: "huge.go", Patch: strings.Repeat("b", 50000)}, // ~16667 tokens，必丢
 	})
-	ctx, err := b.Build(pr)
+	ctx, err := b.Build(context.Background(), pr)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -93,7 +94,7 @@ func TestLayered_L3Conventions(t *testing.T) {
 		AgentDocs: "Use errors.Is for sentinels.",
 	}
 
-	ctx, err := b.Build(pr)
+	ctx, err := b.Build(context.Background(), pr)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -114,7 +115,7 @@ func TestLayered_L3TruncatedWhenLarge(t *testing.T) {
 	// L3 预算 = 2000/10 = 200 tokens ≈ 600 chars；写 100K chars 必截断
 	pr.Conventions = github.Conventions{Readme: strings.Repeat("R", 100000)}
 
-	ctx, err := b.Build(pr)
+	ctx, err := b.Build(context.Background(), pr)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -131,7 +132,7 @@ func TestLayered_BudgetReport(t *testing.T) {
 	pr := newPR([]github.File{
 		{Path: "a.go", Patch: strings.Repeat("a", 300)},
 	})
-	ctx, err := b.Build(pr)
+	ctx, err := b.Build(context.Background(), pr)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}

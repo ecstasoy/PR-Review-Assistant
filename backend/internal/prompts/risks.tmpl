@@ -7,6 +7,16 @@
 ## 项目约定
 {{ . }}
 {{ end }}
+{{ with .L4References }}
+## 相关代码（跨文件 RAG 检索）
+{{ range . -}}
+**{{ .File }}**（{{ .Reason }}）
+```
+{{ .Snippet }}
+```
+
+{{ end -}}
+{{ end }}
 {{ with .L2Files }}
 ## 改动文件
 {{ range . -}}

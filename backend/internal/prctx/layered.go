@@ -1,7 +1,9 @@
 package prctx
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/github"
@@ -15,8 +17,11 @@ const (
 	// charsPerToken 粗略估算：中文 ~2 char/token，英文 ~4 char/token，取保守均值 3
 	charsPerToken = 3
 
-	// floorL2Tokens L2 至少保留的预算，避免大 L3 / L1 把 L2 挤光
+	// floorL2Tokens L2 至少保留的预算，避免大 L3 / L1 / L4 把 L2 挤光
 	floorL2Tokens = 1000
+
+	// defaultRAGTopK 默认召回数；v3 调参可调
+	defaultRAGTopK = 4
 )
 
 // LayeredBuilder 实现 Builder，按 L1:L2:L3 = 4:5:1 分配 token 预算，
@@ -52,7 +57,16 @@ func NewLayeredBuilder(opts ...Option) *LayeredBuilder {
 }
 
 // Build 按预算分配 + 压缩生成 Context。
-func (b *LayeredBuilder) Build(pr github.PullRequest) (Context, error) {
+//
+// 预算分配（含 L4 RAG）：
+//   - L1: 永远全留（超 limit 直接报错）
+//   - L3: TokenLimit * 10%
+//   - L4: TokenLimit * 20%（Retriever 非 Noop 时启用；Noop 时 0）
+//   - L2: TokenLimit - L1 - L3 - L4，至少保留 floorL2Tokens
+//
+// 引入 L4 后整体比例约 3:4:1:2（与 design README §未来扩展 一致）；
+// Retriever=Noop 时 L4=0，等价回退到原 4:5:1。
+func (b *LayeredBuilder) Build(ctx context.Context, pr github.PullRequest) (Context, error) {
 	if b.TokenLimit <= 0 {
 		return Context{}, fmt.Errorf("token limit must be positive: %d", b.TokenLimit)
 	}
@@ -83,8 +97,13 @@ func (b *LayeredBuilder) Build(pr github.PullRequest) (Context, error) {
 	}
 	l3Tokens := estimateTokens(l3Str)
 
-	// L2 可用预算 = 总 - L1 - L3（严格不超出 TokenLimit）
-	l2Avail := b.TokenLimit - l1Tokens - l3Tokens
+	// L4：跨文件 RAG 检索；Retriever 非 Noop 时启用
+	// query 用 L1Meta（包含 PR 标题 / body / 文件名）作语义搜索锚点
+	// scope = owner/repo 避免跨仓库串扰
+	l4Refs, l4Tokens := b.buildL4(ctx, pr, l1Str, l1Tokens, l3Tokens)
+
+	// L2 可用预算 = 总 - L1 - L3 - L4（严格不超出 TokenLimit）
+	l2Avail := b.TokenLimit - l1Tokens - l3Tokens - l4Tokens
 	if l2Avail < 0 {
 		l2Avail = 0
 	}
@@ -95,15 +114,79 @@ func (b *LayeredBuilder) Build(pr github.PullRequest) (Context, error) {
 		L1Meta:        l1Str,
 		L2Files:       l2Files,
 		L3Conventions: l3Str,
-		L4References:  nil, // v2 RAG 接入位
+		L4References:  l4Refs,
 		BudgetReport: BudgetReport{
 			TokenLimit: b.TokenLimit,
 			UsedL1:     l1Tokens,
 			UsedL2:     l2Used,
 			UsedL3:     l3Tokens,
+			UsedL4:     l4Tokens,
 			Dropped:    dropped,
 		},
 	}, nil
+}
+
+// buildL4 调 Retriever 召回，按 L4 预算截断 References 数量 + 单条 snippet 字符。
+// 失败时返回 (nil, 0) + warn —— RAG 不可用时整个评审仍要能跑。
+func (b *LayeredBuilder) buildL4(
+	ctx context.Context,
+	pr github.PullRequest,
+	l1Str string,
+	l1Tokens, l3Tokens int,
+) ([]index.Reference, int) {
+	if b.Retriever == nil {
+		return nil, 0
+	}
+	// NoopRetriever 直接跳过 retrieve 调用；省一次 embed
+	if _, isNoop := b.Retriever.(index.NoopRetriever); isNoop {
+		return nil, 0
+	}
+
+	l4Budget := b.TokenLimit / 5 // 20% 预算
+	// 与 L3 同样的 floor 保护：L1+L3+L4+floorL2 ≤ TokenLimit
+	maxL4Budget := b.TokenLimit - l1Tokens - l3Tokens - floorL2Tokens
+	if maxL4Budget < 0 {
+		maxL4Budget = 0
+	}
+	if l4Budget > maxL4Budget {
+		l4Budget = maxL4Budget
+	}
+	if l4Budget == 0 {
+		return nil, 0
+	}
+
+	scope := pr.Owner + "/" + pr.Repo
+	// query 用 L1Meta 前 1K 字符（标题 + body 通常够 cosine 找到相关文件）
+	query := l1Str
+	if len(query) > 1024 {
+		query = query[:1024]
+	}
+	refs, err := b.Retriever.Retrieve(ctx, scope, query, defaultRAGTopK)
+	if err != nil {
+		slog.Warn("prctx: RAG retrieve failed; skipping L4", "scope", scope, "err", err)
+		return nil, 0
+	}
+	if len(refs) == 0 {
+		return nil, 0
+	}
+
+	// 按预算截断：单条 snippet 字符不超过 budget/N（均分）
+	maxCharsPerRef := (l4Budget * charsPerToken) / len(refs)
+	out := make([]index.Reference, 0, len(refs))
+	used := 0
+	for _, r := range refs {
+		snippet := r.Snippet
+		if maxCharsPerRef > 0 && len(snippet) > maxCharsPerRef {
+			snippet = snippet[:maxCharsPerRef] + "\n...[truncated]"
+		}
+		tok := estimateTokens(snippet) + estimateTokens(r.File) + estimateTokens(r.Reason)
+		if used+tok > l4Budget {
+			break
+		}
+		out = append(out, index.Reference{File: r.File, Snippet: snippet, Reason: r.Reason})
+		used += tok
+	}
+	return out, used
 }
 
 func buildL1Meta(pr github.PullRequest) string {

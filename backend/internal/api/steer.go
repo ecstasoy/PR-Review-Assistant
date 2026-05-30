@@ -114,7 +114,7 @@ func PostSteer(d Deps) gin.HandlerFunc {
 		if builder == nil {
 			builder = prctx.NewLayeredBuilder()
 		}
-		pCtx, err := builder.Build(pr)
+		pCtx, err := builder.Build(ctx, pr)
 		if err != nil {
 			slog.Error("steer build prctx", "err", err, "id", id)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "build context failed"})
