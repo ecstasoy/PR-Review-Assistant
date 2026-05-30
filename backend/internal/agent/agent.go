@@ -123,6 +123,9 @@ func (a *Agent) Run(ctx context.Context, req llm.Request) (Result, error) {
 			if c.Err != nil {
 				return Result{Output: lastText.String(), Steps: step}, fmt.Errorf("agent step %d: %w", step, c.Err)
 			}
+			if c.Done {
+				break
+			}
 			if c.Text != "" {
 				lastText.WriteString(c.Text)
 			}
