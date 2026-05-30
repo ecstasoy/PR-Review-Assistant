@@ -29,7 +29,12 @@ export interface StreamCallbacks {
   onDone?: () => void;
 }
 
-// streamSteer POST /api/review/:id/steer 引导重跑 risks 或 suggestions 阶段。
+// SteerMode 决定 steer 端点跑哪条路径：
+//   - "stage"（默认）：重跑 risks / suggestions stage，结果替换前端 state（v2 行为）
+//   - "agent"：跑 agent.Run + ReAct loop + 工具调用，结果作 info 帧（A5）；前端会看到 tool_call 时间线步骤
+export type SteerMode = "stage" | "agent";
+
+// streamSteer POST /api/review/:id/steer 引导重跑 stage 或跑 agent loop。
 // 与 streamReview 一样按 SSE 帧分发；4xx/5xx 同步错误直接 throw。
 export async function streamSteer(
   reviewId: string,
@@ -37,11 +42,12 @@ export async function streamSteer(
   stage: "risks" | "suggestions",
   cb: StreamCallbacks,
   signal?: AbortSignal,
+  mode: SteerMode = "stage",
 ): Promise<void> {
   const res = await fetch(`/api/review/${encodeURIComponent(reviewId)}/steer`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, stage }),
+    body: JSON.stringify({ text, stage, mode }),
     signal,
   });
   if (!res.ok) {

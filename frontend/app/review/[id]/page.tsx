@@ -328,6 +328,9 @@ function ReviewDetailPageContent({ id }: { id: string }) {
                 reviewId={isStreaming ? undefined : id}
                 onSteeredRisks={setRisks}
                 onSteeredSuggestions={setSuggestions}
+                onSteerToolCallStart={(call) => setToolEvents((prev) => mergeToolStart(prev, call))}
+                onSteerToolCallDone={(call) => setToolEvents((prev) => mergeToolDone(prev, call))}
+                onSteerInfo={setInfo}
                 toolEvents={toolEvents}
               />
             )}
