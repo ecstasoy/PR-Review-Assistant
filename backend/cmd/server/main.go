@@ -15,6 +15,7 @@ import (
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/config"
 	gh "github.com/ecstasoy/PR-Review-Assistant/backend/internal/github"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/llm"
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/observability"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/prctx"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/store"
 )
@@ -34,6 +35,15 @@ func main() {
 	}
 
 	cfg := config.MustLoad()
+
+	// OpenTelemetry：OTLP_ENDPOINT 非空时初始化 trace provider；空时 noop
+	otelCleanup, _ := observability.InitTracer(observability.OTelConfig{
+		Endpoint:    cfg.OTLPEndpoint,
+		Environment: cfg.Environment,
+		Insecure:    true, // dev / 同 cluster 内 collector 用；公网部署改 false
+	})
+	defer otelCleanup()
+
 	deps := buildDeps(cfg)
 
 	r := gin.New()
