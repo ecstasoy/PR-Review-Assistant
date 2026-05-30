@@ -37,11 +37,15 @@ func main() {
 	cfg := config.MustLoad()
 
 	// OpenTelemetry：OTLP_ENDPOINT 非空时初始化 trace provider；空时 noop
-	otelCleanup, _ := observability.InitTracer(observability.OTelConfig{
-		Endpoint:    cfg.OTLPEndpoint,
+	otelEndpoint := strings.TrimSpace(cfg.OTLPEndpoint)
+	otelCleanup, err := observability.InitTracer(observability.OTelConfig{
+		Endpoint:    otelEndpoint,
 		Environment: cfg.Environment,
-		Insecure:    true, // dev / 同 cluster 内 collector 用；公网部署改 false
+		Insecure:    !strings.HasPrefix(strings.ToLower(otelEndpoint), "https://"),
 	})
+	if err != nil {
+		slog.Warn("otel init failed; continuing without tracing", "err", err)
+	}
 	defer otelCleanup()
 
 	deps := buildDeps(cfg)

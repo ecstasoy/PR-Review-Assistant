@@ -1,6 +1,9 @@
 package observability
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestInitTracer_EmptyEndpoint_NoopCleanup(t *testing.T) {
 	cleanup, err := InitTracer(OTelConfig{Endpoint: ""})
@@ -19,7 +22,10 @@ func TestStripScheme(t *testing.T) {
 	}{
 		{"http://collector:4318", "collector:4318"},
 		{"https://collector:4318", "collector:4318"},
+		{" http://collector:4318/v1/traces ", "collector:4318"},
+		{"https://collector:4318/v1/traces?token=secret#frag", "collector:4318"},
 		{"collector:4318", "collector:4318"}, // 已经无 scheme 时不动
+		{"collector:4318/v1/traces?token=secret#frag", "collector:4318"},
 		{"", ""},
 	}
 	for _, c := range cases {
@@ -39,5 +45,14 @@ func TestInitTracer_WithEndpoint_NoOpCleanupOnUnreachable(t *testing.T) {
 	if cleanup == nil {
 		t.Fatalf("cleanup should not be nil")
 	}
-	cleanup() // 不应卡死或 panic
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		cleanup()
+	}()
+	select {
+	case <-done:
+	case <-time.After(6 * time.Second):
+		t.Fatal("cleanup should return before shutdown timeout")
+	}
 }

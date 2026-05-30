@@ -3,6 +3,8 @@ package observability
 import (
 	"context"
 	"log/slog"
+	"net/url"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -29,7 +31,8 @@ type OTelConfig struct {
 //   - resource 标 service.name + deployment.environment
 func InitTracer(cfg OTelConfig) (cleanup func(), err error) {
 	noop := func() {}
-	if cfg.Endpoint == "" {
+	endpoint := stripScheme(cfg.Endpoint)
+	if endpoint == "" {
 		slog.Info("otel disabled (OTLP_ENDPOINT empty)")
 		return noop, nil
 	}
@@ -42,7 +45,12 @@ func InitTracer(cfg OTelConfig) (cleanup func(), err error) {
 		env = "development"
 	}
 
-	opts := []otlptracehttp.Option{otlptracehttp.WithEndpoint(stripScheme(cfg.Endpoint))}
+	opts := []otlptracehttp.Option{otlptracehttp.WithEndpoint(endpoint)}
+	if hasHTTPSScheme(cfg.Endpoint) {
+		cfg.Insecure = false
+	} else if hasHTTPPlaintextScheme(cfg.Endpoint) {
+		cfg.Insecure = true
+	}
 	if cfg.Insecure {
 		opts = append(opts, otlptracehttp.WithInsecure())
 	}
@@ -52,18 +60,23 @@ func InitTracer(cfg OTelConfig) (cleanup func(), err error) {
 		return noop, err
 	}
 
-	res, _ := resource.Merge(resource.Default(), resource.NewWithAttributes(
+	customResource := resource.NewWithAttributes(
 		semconv.SchemaURL,
 		semconv.ServiceName(serviceName),
 		semconv.DeploymentEnvironment(env),
-	))
+	)
+	res, mergeErr := resource.Merge(resource.Default(), customResource)
+	if mergeErr != nil {
+		slog.Warn("otel resource merge failed; using custom resource only", "err", mergeErr)
+		res = customResource
+	}
 
 	provider := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exporter),
 		sdktrace.WithResource(res),
 	)
 	otel.SetTracerProvider(provider)
-	slog.Info("otel enabled", "endpoint", cfg.Endpoint, "service", serviceName, "environment", env)
+	slog.Info("otel enabled", "endpoint", endpoint, "service", serviceName, "environment", env)
 
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -77,10 +90,26 @@ func InitTracer(cfg OTelConfig) (cleanup func(), err error) {
 // stripScheme 去掉 URL 的 http:// / https:// 前缀；otlptracehttp 的 WithEndpoint 只要 host:port 形态。
 // 用 Insecure 选项区分协议；写法和 OpenTelemetry SDK 约定一致。
 func stripScheme(endpoint string) string {
+	endpoint = strings.TrimSpace(endpoint)
 	for _, prefix := range []string{"http://", "https://"} {
-		if len(endpoint) >= len(prefix) && endpoint[:len(prefix)] == prefix {
-			return endpoint[len(prefix):]
+		if len(endpoint) >= len(prefix) && strings.EqualFold(endpoint[:len(prefix)], prefix) {
+			if parsed, err := url.Parse(endpoint); err == nil && parsed.Host != "" {
+				return parsed.Host
+			}
+			endpoint = endpoint[len(prefix):]
+			break
 		}
 	}
+	if idx := strings.IndexAny(endpoint, "/?#"); idx >= 0 {
+		return endpoint[:idx]
+	}
 	return endpoint
+}
+
+func hasHTTPPlaintextScheme(endpoint string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(endpoint)), "http://")
+}
+
+func hasHTTPSScheme(endpoint string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(endpoint)), "https://")
 }
