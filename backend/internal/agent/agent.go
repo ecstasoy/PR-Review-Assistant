@@ -7,9 +7,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/llm"
 )
+
+// ErrMaxStepsReached agent loop 达到 MaxSteps 仍未收敛（LLM 一直在调工具）。
+// Result.Output 仍含最后一次 assistant text 供调用方降级展示。
+var ErrMaxStepsReached = errors.New("agent: max steps reached")
+
+const defaultMaxSteps = 6
 
 // ToolSpec OpenAI function-calling 风格的工具描述。
 // 直接复用 llm 包的同形状定义：Registry.Specs() 可直传 llm.Request.Tools。
@@ -64,7 +72,107 @@ type Agent struct {
 	MaxSteps int
 }
 
-// Run 跑循环。v2 实现：LLM -> 工具调用 -> 把结果作为 user message 回灌 -> 再调 LLM；最多 MaxSteps 轮。
+// Run 跑 ReAct 循环：LLM → 看是否 tool_calls → 跑工具 → 结果回灌作 role=tool 消息 → 再调 LLM。
+// 最多 MaxSteps 轮（默认 6）；用尽返 ErrMaxStepsReached 但 Result.Output 仍含最后 text。
+//
+// 兼容两种 Request 模式：
+//   - Messages 非空：直接作初始对话（agent 高层接口）
+//   - System / User：组装成 system+user 两条消息（兼容 v1/v2 stage 风格）
+//
+// 工具执行错误（Run 返 err）不让 loop 挂：错误文字作 tool result 回灌让 LLM 决定如何应对。
+// 未知 tool 同样返错回灌（防 LLM 调到未注册工具时整轮失败）。
 func (a *Agent) Run(ctx context.Context, req llm.Request) (Result, error) {
-	return Result{}, errors.New("agent.Agent.Run: not implemented yet (reserved for v2)")
+	if a.Provider == nil {
+		return Result{}, errors.New("agent: Provider is nil")
+	}
+	maxSteps := a.MaxSteps
+	if maxSteps <= 0 {
+		maxSteps = defaultMaxSteps
+	}
+
+	msgs := append([]llm.Message(nil), req.Messages...)
+	if len(msgs) == 0 {
+		if req.System != "" {
+			msgs = append(msgs, llm.Message{Role: "system", Content: req.System})
+		}
+		if req.User != "" {
+			msgs = append(msgs, llm.Message{Role: "user", Content: req.User})
+		}
+	}
+
+	var specs []llm.ToolSpec
+	if a.Tools != nil {
+		specs = a.Tools.Specs()
+	}
+
+	var lastText strings.Builder
+	for step := 0; step < maxSteps; step++ {
+		lastText.Reset()
+		var calls []llm.ToolCall
+
+		ch, err := a.Provider.Stream(ctx, llm.Request{
+			Messages:    msgs,
+			Tools:       specs,
+			Temperature: req.Temperature,
+			Model:       req.Model,
+			JSONSchema:  req.JSONSchema,
+		})
+		if err != nil {
+			return Result{Steps: step}, fmt.Errorf("agent step %d: %w", step, err)
+		}
+		for c := range ch {
+			if c.Err != nil {
+				return Result{Output: lastText.String(), Steps: step}, fmt.Errorf("agent step %d: %w", step, c.Err)
+			}
+			if c.Done {
+				break
+			}
+			if c.Text != "" {
+				lastText.WriteString(c.Text)
+			}
+			if len(c.ToolCalls) > 0 {
+				calls = append(calls, c.ToolCalls...)
+			}
+		}
+
+		// 没 tool_calls：本轮 assistant 给出最终答案，结束
+		if len(calls) == 0 {
+			return Result{Output: lastText.String(), Steps: step + 1}, nil
+		}
+
+		// 把本轮 assistant message（含 tool_calls）+ 每个 tool 的执行结果回灌
+		msgs = append(msgs, llm.Message{
+			Role:      "assistant",
+			Content:   lastText.String(),
+			ToolCalls: calls,
+		})
+		for _, tc := range calls {
+			result := a.runTool(ctx, tc)
+			msgs = append(msgs, llm.Message{
+				Role:       "tool",
+				Name:       tc.Name,
+				ToolCallID: tc.ID,
+				Content:    result,
+			})
+		}
+	}
+
+	// MaxSteps 用尽：返最后 text + 显式 error 让调用方降级
+	return Result{Output: lastText.String(), Steps: maxSteps}, ErrMaxStepsReached
+}
+
+// runTool 单次工具调用；未知 tool / 执行 err 都返字符串供回灌（不抛 err 中断 loop）。
+func (a *Agent) runTool(ctx context.Context, tc llm.ToolCall) string {
+	if a.Tools == nil {
+		return fmt.Sprintf("error: no tool registry configured (asked for %q)", tc.Name)
+	}
+	tool, ok := a.Tools.Lookup(tc.Name)
+	if !ok {
+		return fmt.Sprintf("error: unknown tool %q", tc.Name)
+	}
+	out, err := tool.Run(ctx, json.RawMessage(tc.Arguments))
+	if err != nil {
+		return fmt.Sprintf("error: %s", err.Error())
+	}
+	return out
 }
