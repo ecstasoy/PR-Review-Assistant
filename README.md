@@ -43,6 +43,29 @@ curl http://localhost:8080/health   # → {"status":"ok"}
 
 试跑：打开 http://localhost:3000，粘贴任意公开 PR 链接（如 `https://github.com/golang/go/pull/12345`）→ 落地页提交后跳 `/review/streaming?url=…`，SSE 逐步出总结 / 风险 / 建议。
 
+## ☁️ 部署
+
+最小可行：**Fly.io（后端）+ Vercel（前端）**，全免费档够 demo。完整步骤见 [`docs/DEPLOY.md`](./docs/DEPLOY.md)。
+
+```bash
+# 后端
+cd backend
+flyctl launch --no-deploy --copy-config       # 用现成 fly.toml
+flyctl volumes create data --size 1 --region nrt
+flyctl secrets set OPENAI_API_KEY=sk-xxx GITHUB_TOKEN=ghp_yyy
+flyctl deploy
+# → https://lgtm-backend.fly.dev
+
+# 前端
+cd ../frontend
+vercel link
+vercel env add BACKEND_URL production         # 填 https://lgtm-backend.fly.dev
+vercel deploy --prod
+# → https://lgtm-frontend.vercel.app
+```
+
+升级路径（PG / Redis / OAuth / Sentry / 自有域名）见 [`docs/DEPLOY.md`](./docs/DEPLOY.md) 「升级路径」节。
+
 ## ⚙️ 环境配置
 
 后端启动时由 `godotenv` 自动从 `backend/.env` 加载；生产环境直接用 process env，无需 `.env` 文件。

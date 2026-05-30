@@ -1,0 +1,56 @@
+# LGTM 后端 Fly.io 配置
+# 用法：在 backend/ 目录执行 `flyctl launch --no-deploy --copy-config`
+# 然后设 secrets（见 docs/DEPLOY.md）后 `flyctl deploy`
+
+app = "lgtm-backend"
+primary_region = "nrt"  # Tokyo；距 GitHub + 国内用户都近。可改 hkg / sin / sjc 等
+
+[build]
+  dockerfile = "Dockerfile"
+
+# 公网入口：HTTPS 自动 + force_https，容器内监听 8080
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"     # 闲置自动停（免费档省时长）
+  auto_start_machines = true      # 请求来了自动起
+  min_machines_running = 0        # 完全无流量时省钱；要持续在线改 1
+  processes = ["app"]
+
+  # liveness：进程还活着；30s 一次
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    timeout = "3s"
+    path = "/api/health/live"
+
+  # readiness：依赖可用；10s 一次，失败 LB 摘流不重启
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "10s"
+    method = "GET"
+    timeout = "3s"
+    path = "/api/health/ready"
+
+# Volume：SQLite 文件挂载（重启 / 重部署不丢历史评审）
+# 创建：`flyctl volumes create data --size 1 --region nrt`
+[mounts]
+  source = "data"
+  destination = "/data"
+
+# 默认 env（非敏感；secrets 走 `flyctl secrets set ...`）
+[env]
+  PORT = "8080"
+  LLM_PROVIDER = "openai"
+  OPENAI_BASE_URL = "https://api.deepseek.com"
+  LLM_MODEL = "deepseek-chat"
+  SQLITE_PATH = "/data/reviews.db"
+  ENVIRONMENT = "production"
+  # Fly 内部 6PN 反代 + Anycast 边缘；trust 之让 ClientIP 正确解析
+  TRUSTED_PROXIES = "fly-global-services"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512  # 给 LLM 调用 + 未来 sqlite-vss 留余量；免费档够
