@@ -14,11 +14,45 @@ import (
 	"github.com/gin-gonic/gin"
 
 	gh "github.com/ecstasoy/PR-Review-Assistant/backend/internal/github"
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/index"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/llm"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/prctx"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/review"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/store"
 )
+
+// indexMaxChunkChars 单 chunk 内容字符上限；超过截断
+// embedding API 多数模型上限 8192 token≈30K 字符，留余量
+const indexMaxChunkChars = 8000
+
+// indexPRChunks 把本次 PR 的 file patches 转 chunks 同步写索引
+// scope = "owner/repo"；同 (scope,path,idx) ON CONFLICT 覆盖 → 重复评同 PR 不会重复 embed
+// 失败仅 warn 不阻断评审；NoopIndexer 直接 no-op 无 API 调用
+func indexPRChunks(ctx context.Context, idx index.Indexer, pr gh.PullRequest) {
+	if _, isNoop := idx.(index.NoopIndexer); isNoop {
+		return
+	}
+	chunks := make([]index.IndexerChunk, 0, len(pr.Files))
+	for _, f := range pr.Files {
+		content := f.Patch
+		if content == "" {
+			continue
+		}
+		if len(content) > indexMaxChunkChars {
+			content = content[:indexMaxChunkChars]
+		}
+		chunks = append(chunks, index.IndexerChunk{Path: f.Path, Idx: 0, Content: content})
+	}
+	if len(chunks) == 0 {
+		return
+	}
+	scope := pr.Owner + "/" + pr.Repo
+	if err := idx.UpsertMany(ctx, scope, chunks); err != nil {
+		slog.Warn("index PR chunks failed; review proceeds without fresh L4", "scope", scope, "err", err)
+		return
+	}
+	slog.Info("indexed PR chunks", "scope", scope, "chunks", len(chunks))
+}
 
 // PostReview 接收 { url }，先用 JSON 处理预检错误；
 // 成功后切到 text/event-stream，按帧推送各 stage 事件。
@@ -92,6 +126,12 @@ func PostReview(d Deps) gin.HandlerFunc {
 					return
 				}
 			}
+		}
+
+		// B4 RAG 同步索引：把本次 PR 的 patches 切 chunks 入库 → Build 时 L4 retrieve 能命中本仓库内容
+		// 失败仅 warn（embedding API 抖动 / 配额超），不影响整体评审
+		if d.Indexer != nil {
+			indexPRChunks(ctx, d.Indexer, pr)
 		}
 
 		builder := d.Builder

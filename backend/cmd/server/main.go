@@ -147,12 +147,15 @@ func buildDeps(cfg config.Config) api.Deps {
 		if rt, err := index.NewSQLiteRetriever(cfg.RAGDBPath, deps.Embedder); err != nil {
 			slog.Error("open rag retriever failed; using NoopRetriever", "err", err)
 			deps.Retriever = index.NoopRetriever{}
+			deps.Indexer = index.NoopIndexer{}
 		} else {
 			deps.Retriever = rt
+			deps.Indexer = rt // SQLiteRetriever 同时实现 Retriever + Indexer
 			slog.Info("retriever ready", "type", "sqlite", "path", cfg.RAGDBPath)
 		}
 	} else {
 		deps.Retriever = index.NoopRetriever{}
+		deps.Indexer = index.NoopIndexer{}
 		slog.Info("retriever ready", "type", "noop")
 	}
 	// 重新构造 Builder 注入 Retriever；prctx.LayeredBuilder.buildL4 用它召回 RAG references
