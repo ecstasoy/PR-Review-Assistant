@@ -25,6 +25,9 @@ func Register(r *gin.Engine, d Deps) {
 	g := r.Group("/api")
 	g.Use(middleware.AuthCtx())
 
+	expensive := middleware.RateLimit(middleware.ExpensiveDefault)
+	read := middleware.RateLimit(middleware.ReadDefault)
+	
 	// /health 留为 liveness 别名（向后兼容 v1/v2 配置）
 	g.GET("/health", Health)
 	g.GET("/health/live", Health)
@@ -33,6 +36,4 @@ func Register(r *gin.Engine, d Deps) {
 	g.GET("/reviews", ListReviews(d))
 	g.GET("/reviews/:id", GetReview(d))
 	g.POST("/review/:id/steer", PostSteer(d))
-	expensive := middleware.RateLimit(middleware.ExpensiveDefault)
-	read := middleware.RateLimit(middleware.ReadDefault)
 }
