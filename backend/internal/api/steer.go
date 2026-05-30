@@ -39,7 +39,11 @@ func buildAgentUserPrompt(pr gh.PullRequest, userQuery string, pCtx prctx.Contex
 	if len(pCtx.L4References) > 0 {
 		sb.WriteString("\n\n## 相关代码（跨文件 RAG 召回；可能来自本 PR 或之前评过的同 repo PR）\n")
 		for _, r := range pCtx.L4References {
-			fmt.Fprintf(&sb, "\n**%s**（%s）\n```\n%s\n```\n", r.File, r.Reason, r.Snippet)
+			origin := r.Reason
+			if r.PRNumber > 0 {
+				origin = fmt.Sprintf("来自 PR #%d · %s", r.PRNumber, r.Reason)
+			}
+			fmt.Fprintf(&sb, "\n**%s**（%s）\n```\n%s\n```\n", r.File, origin, r.Snippet)
 		}
 	}
 	return sb.String()

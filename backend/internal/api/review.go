@@ -41,7 +41,7 @@ func indexPRChunks(ctx context.Context, idx index.Indexer, pr gh.PullRequest) {
 		if len(content) > indexMaxChunkChars {
 			content = content[:indexMaxChunkChars]
 		}
-		chunks = append(chunks, index.IndexerChunk{Path: f.Path, Idx: 0, Content: content})
+		chunks = append(chunks, index.IndexerChunk{Path: f.Path, Idx: 0, Content: content, PRNumber: pr.Number})
 	}
 	if len(chunks) == 0 {
 		return
