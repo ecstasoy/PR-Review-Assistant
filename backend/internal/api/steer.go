@@ -10,7 +10,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/agent"
 	gh "github.com/ecstasoy/PR-Review-Assistant/backend/internal/github"
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/llm"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/prctx"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/review"
 )
@@ -40,6 +42,7 @@ func PostSteer(d Deps) gin.HandlerFunc {
 		var body struct {
 			Text  string `json:"text"`
 			Stage string `json:"stage"`
+			Mode  string `json:"mode"` // "stage"（默认，重跑 risks/suggestions）/ "agent"（跑 ReAct loop + 工具调用）
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
@@ -50,12 +53,21 @@ func PostSteer(d Deps) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "text is required"})
 			return
 		}
+		mode := body.Mode
+		if mode == "" {
+			mode = "stage"
+		}
+		if mode != "stage" && mode != "agent" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "mode must be one of: stage, agent"})
+			return
+		}
+		// stage 字段在 mode=stage 时必填；agent 模式忽略
 		stageKey := body.Stage
 		if stageKey == "" {
 			stageKey = "risks"
 		}
-		stage, ok := allowedSteerStages[stageKey]
-		if !ok {
+		stage, stageOK := allowedSteerStages[stageKey]
+		if mode == "stage" && !stageOK {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "stage must be one of: risks, suggestions"})
 			return
 		}
@@ -118,7 +130,50 @@ func PostSteer(d Deps) gin.HandlerFunc {
 		c.Header("Connection", "keep-alive")
 		c.Header("X-Accel-Buffering", "no")
 
-		// info 帧：让前端会话视图能立即插一步「用户引导」running 状态
+		// mode=agent：跑 ReAct loop + 工具调用；通过 WireAgentSSE 自动推 tool_call_start/done 帧
+		if mode == "agent" {
+			writeSSE(c.Writer, "info", map[string]string{
+				"message": "Agent 启动：可调用 read_file / list_dir / grep_patches 工具深挖",
+				"stage":   "agent",
+			})
+			c.Writer.Flush()
+
+			reg := agent.NewRegistry()
+			agent.RegisterDefaults(reg, p.Files)
+
+			a := &agent.Agent{
+				Provider: d.Provider,
+				Tools:    reg,
+				MaxSteps: 5,
+			}
+			WireAgentSSE(a, c.Writer)
+
+			sysPrompt := "你是 code reviewer agent。可调用 read_file / list_dir / grep_patches 三个工具深挖 PR 改动。" +
+				"分析时先想清楚要看哪些文件 / grep 什么模式，再调工具。最后用一段简洁中文文字总结你的发现（不要 JSON）。"
+			userPrompt := fmt.Sprintf("PR：%s/%s#%d（%s）\n\n用户引导：%s\n\n%s",
+				pr.Owner, pr.Repo, pr.Number, pr.Title, text, pCtx.L1Meta)
+
+			result, err := a.Run(ctx, llm.Request{System: sysPrompt, User: userPrompt})
+			if err != nil {
+				slog.Warn("steer agent run failed", "err", err, "steps", result.Steps)
+				writeSSE(c.Writer, "error", map[string]string{
+					"stage":   "agent",
+					"message": err.Error(),
+				})
+			}
+			// 把 agent 最终输出作 info 帧推给前端（v1 简化：不试图 parse 成 risks/suggestions JSON）
+			if result.Output != "" {
+				writeSSE(c.Writer, "info", map[string]string{
+					"message": fmt.Sprintf("Agent 完成（%d 步）：%s", result.Steps, result.Output),
+					"stage":   "agent",
+				})
+			}
+			writeSSE(c.Writer, "done", map[string]any{})
+			c.Writer.Flush()
+			return
+		}
+
+		// 默认 mode=stage：重跑 risks 或 suggestions stage
 		writeSSE(c.Writer, "info", map[string]string{
 			"message": fmt.Sprintf("正在按引导重跑 %s 阶段…", stageKey),
 			"stage":   stageKey,

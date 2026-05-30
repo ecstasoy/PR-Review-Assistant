@@ -23,7 +23,7 @@ import type {
   Risk,
   Suggestion,
 } from "@/lib/types";
-import { streamSteer } from "@/lib/sse";
+import { streamSteer, type SteerMode } from "@/lib/sse";
 import { cn } from "@/lib/utils";
 import { FileStatusBadge } from "@/components/ui/file-status-badge";
 import { SeverityBadge } from "@/components/ui/badge";
@@ -36,6 +36,7 @@ interface SteerEntry {
   id: string;
   text: string;
   stage: "risks" | "suggestions";
+  mode: SteerMode; // stage 重跑 / agent 跑 ReAct loop
   status: "running" | "done" | "error";
   resultCount?: number;
   error?: string;
@@ -158,11 +159,11 @@ export function AgentSessionView({
   const steerInFlightRef = useRef(false);
 
   const handleSteerSend = useCallback(
-    async (text: string, stage: "risks" | "suggestions") => {
+    async (text: string, stage: "risks" | "suggestions", mode: SteerMode) => {
       if (!reviewId || steerInFlightRef.current) return;
       steerInFlightRef.current = true;
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      setSteerHistory((prev) => [...prev, { id, text, stage, status: "running" }]);
+      setSteerHistory((prev) => [...prev, { id, text, stage, mode, status: "running" }]);
       setSteerInFlight(true);
       const markDone = (count: number) =>
         setSteerHistory((prev) =>
@@ -173,18 +174,26 @@ export function AgentSessionView({
           prev.map((e) => (e.id === id ? { ...e, status: "error", error: msg } : e)),
         );
       try {
-        await streamSteer(reviewId, text, stage, {
-          onSteeredRisks: (r) => {
-            onSteeredRisks?.(r);
-            if (stage === "risks") markDone(r.length);
+        await streamSteer(
+          reviewId,
+          text,
+          stage,
+          {
+            onSteeredRisks: (r) => {
+              onSteeredRisks?.(r);
+              if (mode === "stage" && stage === "risks") markDone(r.length);
+            },
+            onSteeredSuggestions: (s) => {
+              onSteeredSuggestions?.(s);
+              if (mode === "stage" && stage === "suggestions") markDone(s.length);
+            },
+            onStageError: (_s, msg) => markError(msg),
           },
-          onSteeredSuggestions: (s) => {
-            onSteeredSuggestions?.(s);
-            if (stage === "suggestions") markDone(s.length);
-          },
-          onStageError: (_s, msg) => markError(msg),
-        });
+          undefined,
+          mode,
+        );
         // 兜底：极端情况下流结束仍未拿到 steered 帧，标 done 不报错
+        // agent 模式不期待 steered_* 帧，工具调用结果走 toolEvents 时间线
         setSteerHistory((prev) =>
           prev.map((e) =>
             e.id === id && e.status === "running" ? { ...e, status: "done", resultCount: 0 } : e,
@@ -837,17 +846,18 @@ function SteerComposer({
   pr: PrMeta;
   disabled: boolean;
   inFlight: boolean;
-  onSend: (text: string, stage: "risks" | "suggestions") => void;
+  onSend: (text: string, stage: "risks" | "suggestions", mode: SteerMode) => void;
 }) {
   const [text, setText] = useState("");
   const [stage, setStage] = useState<"risks" | "suggestions">("risks");
+  const [mode, setMode] = useState<SteerMode>("stage");
   const githubURL = `https://github.com/${pr.owner}/${pr.repo}/pull/${pr.pr}`;
   const enabled = !disabled && !inFlight;
 
   function send() {
     const v = text.trim();
     if (!v || !enabled) return;
-    onSend(v, stage);
+    onSend(v, stage, mode);
     setText("");
   }
 
@@ -865,22 +875,42 @@ function SteerComposer({
               </>
             ) : null}
           </span>
+          {/* 模式切换：stage（重跑 risks/suggestions）/ agent（跑 ReAct loop 调工具） */}
           <div className="flex gap-[3px] rounded-md border border-border bg-surface-2 p-[2px]">
-            {(["risks", "suggestions"] as const).map((s) => (
+            {(["stage", "agent"] as const).map((m) => (
               <button
-                key={s}
+                key={m}
                 type="button"
-                onClick={() => setStage(s)}
-                aria-pressed={stage === s}
+                onClick={() => setMode(m)}
+                aria-pressed={mode === m}
                 className={cn(
                   "rounded-sm px-2 py-[3px] font-mono text-[10.5px] transition-colors",
-                  stage === s ? "bg-surface text-text" : "text-muted hover:text-text",
-                  )}
+                  mode === m ? "bg-surface text-text" : "text-muted hover:text-text",
+                )}
               >
-                {s === "risks" ? "重评风险" : "重出建议"}
+                {m === "stage" ? "重跑 stage" : "agent 深挖"}
               </button>
             ))}
           </div>
+          {/* stage 选择：仅 mode=stage 时显示；agent 模式跳过（不重跑 stage） */}
+          {mode === "stage" ? (
+            <div className="flex gap-[3px] rounded-md border border-border bg-surface-2 p-[2px]">
+              {(["risks", "suggestions"] as const).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setStage(s)}
+                  aria-pressed={stage === s}
+                  className={cn(
+                    "rounded-sm px-2 py-[3px] font-mono text-[10.5px] transition-colors",
+                    stage === s ? "bg-surface text-text" : "text-muted hover:text-text",
+                  )}
+                >
+                  {s === "risks" ? "重评风险" : "重出建议"}
+                </button>
+              ))}
+            </div>
+          ) : null}
           <a
             href={githubURL}
             target="_blank"
@@ -911,7 +941,9 @@ function SteerComposer({
             placeholder={
               disabled
                 ? "流式评审完成后可在此引导 agent"
-                : `引导 agent ${stage === "risks" ? "重评风险" : "重出建议"}（例：重点看并发安全 / 忽略 style 类问题）…`
+                : mode === "agent"
+                  ? "用 agent 深挖（例：去看看 main.go 里的并发是不是 race-free / grep 一下所有 TODO）…"
+                  : `引导 agent ${stage === "risks" ? "重评风险" : "重出建议"}（例：重点看并发安全 / 忽略 style 类问题）…`
             }
             className="max-h-[120px] min-w-0 flex-1 resize-none border-none bg-transparent px-1.5 py-1.5 text-sm leading-snug text-text outline-none placeholder:text-faint disabled:cursor-not-allowed"
           />
