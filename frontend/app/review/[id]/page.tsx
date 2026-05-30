@@ -14,7 +14,12 @@ import { SummaryCard } from "@/components/review/SummaryCard";
 import { RisksList } from "@/components/review/RisksList";
 import { DiffView } from "@/components/review/DiffView";
 import { AgentPanel } from "@/components/review/AgentPanel";
-import { AgentSessionView } from "@/components/review/AgentSessionView";
+import {
+  AgentSessionView,
+  mergeToolDone,
+  mergeToolStart,
+  type ToolEvent,
+} from "@/components/review/AgentSessionView";
 import { Spinner } from "@/components/ui/spinner";
 import type { StageState } from "@/components/review/StageChip";
 
@@ -58,6 +63,7 @@ function ReviewDetailPageContent({ id }: { id: string }) {
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [files, setFiles] = useState<File[]>([]);
   const [budget, setBudget] = useState<BudgetReport | null>(null);
+  const [toolEvents, setToolEvents] = useState<ToolEvent[]>([]);
   const [summaryDone, setSummaryDone] = useState(false);
   const [risksDone, setRisksDone] = useState(false);
   const [suggestionsDone, setSuggestionsDone] = useState(false);
@@ -102,6 +108,10 @@ function ReviewDetailPageContent({ id }: { id: string }) {
           setSuggestions(s);
           setSuggestionsDone(true);
         },
+        onToolCallStart: (call) =>
+          !cancelled && setToolEvents((prev) => mergeToolStart(prev, call)),
+        onToolCallDone: (call) =>
+          !cancelled && setToolEvents((prev) => mergeToolDone(prev, call)),
         onInfo: (m) => !cancelled && setInfo(m),
         onStageError: (stage, msg) => {
           if (cancelled) return;
@@ -317,6 +327,7 @@ function ReviewDetailPageContent({ id }: { id: string }) {
                 reviewId={isStreaming ? undefined : id}
                 onSteeredRisks={setRisks}
                 onSteeredSuggestions={setSuggestions}
+                toolEvents={toolEvents}
               />
             )}
           </div>
