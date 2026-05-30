@@ -12,6 +12,7 @@ import {
 
 import type { PrMeta } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { BrandMark } from "@/components/BrandMark";
 import { CIStatus, type CIStatusValue } from "@/components/ui/ci-status";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { StageChip, type StageState } from "./StageChip";
@@ -43,10 +44,8 @@ export function ReviewTopBar({
   const githubURL = `https://github.com/${pr.owner}/${pr.repo}/pull/${pr.pr}`;
   return (
     <header className="flex h-[52px] flex-shrink-0 items-center gap-3 border-b border-border bg-surface px-3.5">
-      <Link href="/" className="flex items-center">
-        <span className="inline-flex h-[26px] w-[26px] items-center justify-center rounded-md bg-accent text-accent-fg">
-          <Sparkle className="h-[15px] w-[15px]" strokeWidth={2.2} fill="currentColor" />
-        </span>
+      <Link href="/" className="flex items-center" aria-label="LGTM 首页">
+        <BrandMark size={24} variant="icon" />
       </Link>
       <span className="h-[22px] w-px shrink-0 bg-border" aria-hidden />
       <button

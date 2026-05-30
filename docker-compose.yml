@@ -10,7 +10,7 @@
 services:
   backend:
     build: ./backend
-    container_name: prra-backend
+    container_name: lgtm-backend
     ports:
       - "8080:8080"
     environment:
@@ -22,7 +22,7 @@ services:
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       SQLITE_PATH: /app/data/reviews.db
       # v3 真部署时切上：
-      # POSTGRES_URL: postgres://prra:prra@postgres:5432/prra?sslmode=disable
+      # POSTGRES_URL: postgres://lgtm:lgtm@postgres:5432/lgtm?sslmode=disable
       # REDIS_URL: redis://redis:6379/0
     volumes:
       - backend-data:/app/data
@@ -30,7 +30,7 @@ services:
 
   frontend:
     build: ./frontend
-    container_name: prra-frontend
+    container_name: lgtm-frontend
     ports:
       - "3000:3000"
     environment:
@@ -42,17 +42,17 @@ services:
   # v3 主线①占位：业务还在 SQLite，PG 容器只起着等接入
   postgres:
     image: postgres:16-alpine
-    container_name: prra-postgres
+    container_name: lgtm-postgres
     environment:
-      POSTGRES_USER: prra
-      POSTGRES_PASSWORD: prra
-      POSTGRES_DB: prra
+      POSTGRES_USER: lgtm
+      POSTGRES_PASSWORD: lgtm
+      POSTGRES_DB: lgtm
     ports:
       - "5432:5432"
     volumes:
       - pg-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U prra -d prra"]
+      test: ["CMD-SHELL", "pg_isready -U lgtm -d lgtm"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -60,7 +60,7 @@ services:
   # v3 主线①占位：缓存 + rate limit 计数会接入
   redis:
     image: redis:7-alpine
-    container_name: prra-redis
+    container_name: lgtm-redis
     ports:
       - "6379:6379"
     volumes:

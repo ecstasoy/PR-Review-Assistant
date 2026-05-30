@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 72" width="260" height="72">
+  
+  <g transform="translate(8,12)">
+    <rect width="48" height="48" rx="11" fill="#f4f4f5"></rect>
+    <path d="M13 16.5l7.5 7.5-7.5 7.5" stroke="#8b8b93" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"></path>
+    <rect x="25" y="28" width="11" height="4.5" rx="1" fill="#1f8a5b"></rect>
+  </g>
+  <text x="72" y="48" font-family="&#39;Geist Mono&#39;, ui-monospace, &#39;SF Mono&#39;, Menlo, monospace" font-size="38" font-weight="600" letter-spacing="-1.5" fill="#f4f4f5">lgtm</text>
+</svg>
