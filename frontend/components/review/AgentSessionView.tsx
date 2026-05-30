@@ -13,7 +13,7 @@ import {
   Sparkle,
 } from "lucide-react";
 
-import type { File, PrMeta, Risk, Suggestion } from "@/lib/types";
+import type { BudgetReport, File, PrMeta, Risk, Suggestion } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { FileStatusBadge } from "@/components/ui/file-status-badge";
 import { SeverityBadge } from "@/components/ui/badge";
@@ -27,6 +27,8 @@ interface Props {
   risks: Risk[];
   suggestions: Suggestion[];
   summary: string;
+  // budget 后端真值；null 时回退到 patch-bytes 粗估（流式 budget_report 帧到达前 / 旧缓存）
+  budget: BudgetReport | null;
   // 流式状态机：用于推断每步是 pending / running / done
   hasFiles: boolean;
   risksDone: boolean;
@@ -43,6 +45,7 @@ export function AgentSessionView({
   risks,
   suggestions,
   summary,
+  budget,
   hasFiles,
   risksDone,
   suggestionsDone,
@@ -75,8 +78,11 @@ export function AgentSessionView({
     if (el) el.scrollTop = el.scrollHeight;
   }, [statuses, finished]);
 
-  // 估算 token 预算（v1 用 patch 字节数粗算；后续 PR 接 BudgetReport SSE 帧后换真实值）
-  const budget = useMemo(() => estimateBudget(pr, files), [pr, files]);
+  // budget 优先用后端真值（SSE budget_report / cached detail）；缺失时回退到 patch-bytes 粗估
+  const budgetView = useMemo(
+    () => (budget ? fromBudgetReport(budget) : estimateBudget(pr, files)),
+    [budget, pr, files],
+  );
 
   return (
     <div className="flex h-full min-w-0 flex-col">
@@ -120,9 +126,9 @@ export function AgentSessionView({
             icon={<AlignLeft className="h-3.5 w-3.5" />}
             title="构建三层上下文"
             status={statuses[2]}
-            meta={`${(budget.total / 1000).toFixed(1)}K tok`}
+            meta={`${(budgetView.total / 1000).toFixed(1)}K tok${budgetView.estimated ? "（粗估）" : ""}`}
           >
-            <ContextDetail budget={budget} />
+            <ContextDetail budget={budgetView} />
           </Step>
           <Step
             icon={<Sparkle className="h-3.5 w-3.5" />}
@@ -317,26 +323,62 @@ interface BudgetItem {
   className: string;
 }
 
-function estimateBudget(_pr: PrMeta, files: File[]): { items: BudgetItem[]; total: number } {
-  // 粗估：L2 = patch 字节数 / 3（与后端 estimateTokens 同算法）；L1/L3 用固定值
+interface BudgetView {
+  items: BudgetItem[];
+  total: number;
+  dropped: string[];
+  estimated: boolean; // true = 后端真值缺失时的粗估
+}
+
+const BUDGET_LABELS = {
+  L1: "diff hunk + PR meta",
+  L2: "变更文件 / 受影响函数",
+  L3: "项目约定（README/CLAUDE.md）",
+} as const;
+
+// fromBudgetReport 后端真值（budget_report SSE 帧 / cached detail）→ 渲染形状
+function fromBudgetReport(b: BudgetReport): BudgetView {
+  const items: BudgetItem[] = [
+    { layer: "L1", label: BUDGET_LABELS.L1, tok: b.used_l1, className: "bg-info" },
+    { layer: "L2", label: BUDGET_LABELS.L2, tok: b.used_l2, className: "bg-ok" },
+    { layer: "L3", label: BUDGET_LABELS.L3, tok: b.used_l3, className: "bg-med" },
+  ];
+  return {
+    items,
+    total: Math.max(1, b.used_l1 + b.used_l2 + b.used_l3),
+    dropped: b.dropped ?? [],
+    estimated: false,
+  };
+}
+
+// estimateBudget 粗估：仅在后端真值未到（流式首字节前 / 旧缓存）时兜底
+// L2 = patch 字节数 / 3（与后端 estimateTokens 同算法）；L1/L3 经验值
+function estimateBudget(_pr: PrMeta, files: File[]): BudgetView {
   let patchChars = 0;
   for (const f of files) patchChars += f.patch?.length ?? 0;
   const l2 = Math.max(200, Math.round(patchChars / 3));
-  const l1 = 400 + files.length * 30; // meta + per-file summary
-  const l3 = Math.min(1600, Math.round((l1 + l2) / 12)); // 约 4:5:1 中 L3 那份
-  const items: BudgetItem[] = [
-    { layer: "L1", label: "diff hunk + PR meta", tok: l1, className: "bg-info" },
-    { layer: "L2", label: "变更文件 / 受影响函数", tok: l2, className: "bg-ok" },
-    { layer: "L3", label: "项目约定（README/CLAUDE.md）", tok: l3, className: "bg-med" },
-  ];
-  return { items, total: l1 + l2 + l3 };
+  const l1 = 400 + files.length * 30;
+  const l3 = Math.min(1600, Math.round((l1 + l2) / 12));
+  return {
+    items: [
+      { layer: "L1", label: BUDGET_LABELS.L1, tok: l1, className: "bg-info" },
+      { layer: "L2", label: BUDGET_LABELS.L2, tok: l2, className: "bg-ok" },
+      { layer: "L3", label: BUDGET_LABELS.L3, tok: l3, className: "bg-med" },
+    ],
+    total: l1 + l2 + l3,
+    dropped: [],
+    estimated: true,
+  };
 }
 
-function ContextDetail({ budget }: { budget: { items: BudgetItem[]; total: number } }) {
+function ContextDetail({ budget }: { budget: BudgetView }) {
   return (
     <ToolCard
       label={
-        <>token 预算 · L1:L2:L3 ≈ 4:5:1 · 合计 {(budget.total / 1000).toFixed(1)}K</>
+        <>
+          token 预算 · L1:L2:L3 ≈ 4:5:1 · 合计 {(budget.total / 1000).toFixed(1)}K
+          {budget.estimated ? <span className="text-faint"> · 粗估</span> : null}
+        </>
       }
     >
       <div className="mb-2.5 flex h-2 overflow-hidden rounded-full">
@@ -370,6 +412,15 @@ function ContextDetail({ budget }: { budget: { items: BudgetItem[]; total: numbe
           </code>
         ))}
       </div>
+      {budget.dropped.length > 0 ? (
+        <div className="mt-2 border-t border-dashed border-border pt-2 text-[10.5px] text-muted">
+          <span className="font-medium text-high">超预算丢弃</span>
+          <span className="ml-1.5 font-mono text-faint">
+            {budget.dropped.slice(0, 3).join(" · ")}
+            {budget.dropped.length > 3 ? ` …+${budget.dropped.length - 3}` : ""}
+          </span>
+        </div>
+      ) : null}
     </ToolCard>
   );
 }

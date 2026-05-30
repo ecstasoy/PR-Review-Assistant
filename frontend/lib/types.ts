@@ -73,6 +73,16 @@ export interface PrMeta {
   checks?: Check[];
 }
 
+// BudgetReport 三层上下文 token 预算实际分配；后端 prctx.LayeredBuilder 输出 + SSE budget_report 帧 + detail.budget_report 同形状
+export interface BudgetReport {
+  token_limit: number;
+  used_l1: number;
+  used_l2: number;
+  used_l3: number;
+  used_l4?: number; // v3 RAG 才用
+  dropped?: string[]; // 因预算丢弃全文的文件路径
+}
+
 // ReviewSummary /api/reviews 列表项；不含 payload
 export interface ReviewSummary {
   id: string;
@@ -104,6 +114,7 @@ export interface ReviewDetail extends ReviewSummary {
   summary: string;
   risks?: Risk[];
   suggestions?: Suggestion[];
+  budget_report?: BudgetReport;
 }
 
 // 兼容旧导出（lib/api.ts ReviewResult 类型已无主动消费者）
@@ -125,6 +136,7 @@ export type EventType =
   | "risks_done"
   | "suggestions_done"
   | "files"
+  | "budget_report"
   | "info"
   | "error"
   | "done";
