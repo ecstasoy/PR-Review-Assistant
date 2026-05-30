@@ -115,6 +115,7 @@ func (a *Agent) Run(ctx context.Context, req llm.Request) (Result, error) {
 			Tools:       specs,
 			Temperature: req.Temperature,
 			Model:       req.Model,
+			JSONSchema:  req.JSONSchema,
 		})
 		if err != nil {
 			return Result{Steps: step}, fmt.Errorf("agent step %d: %w", step, err)
