@@ -70,7 +70,7 @@ export function SessionList({ activeId }: Props) {
 function SessionRow({ item, active }: { item: ReviewSummary; active: boolean }) {
   return (
     <Link
-      href={`/review/${item.id}`}
+      href={`/review/${item.id}?view=session`}
       className={cn(
         "relative flex gap-2 rounded-md px-2 py-2 text-left transition-colors",
         active ? "bg-surface-hover" : "hover:bg-surface-hover",
