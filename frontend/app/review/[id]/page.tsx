@@ -85,6 +85,7 @@ function ReviewDetailPageContent({ id }: { id: string }) {
   useEffect(() => {
     let cancelled = false;
     let controller: AbortController | null = null;
+    setToolEvents([]);
     if (isStreaming) {
       if (!sourceURL) {
         setError("缺少 url 参数");

@@ -206,7 +206,7 @@ export function AgentSessionView({
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [statuses, finished]);
+  }, [statuses, finished, (toolEvents ?? []).length]);
 
   // budget 优先用后端真值（SSE budget_report / cached detail）；缺失时回退到 patch-bytes 粗估
   const budgetView = useMemo(
