@@ -2,7 +2,7 @@
 
 > *Looks Good To Me* — 一个 **站在 reviewer 视角** 的 AI 辅助评审工具。粘贴任意 GitHub PR 链接，30 秒拿到结构化评审：**变更总结 / 风险识别 / 行内建议**。
 >
-> 产品名取自 code review 里批准 PR 的经典缩写；主标识是终端光标字标（小写等宽 `lgtm` + 绿色光标块），绿色与产品里 CI passing、diff added 同源。完整品牌资产见 [`prototype/brand/`](./prototype/brand/)。
+> 产品名取自 code review 里批准 PR 的经典缩写；主标识是终端光标字标（小写等宽 `lgtm` + 绿色光标块），绿色与产品里 CI passing、diff added 同源。完整品牌资产见 [`frontend/public/brand/`](./frontend/public/brand/)。
 
 ## ✨ 核心能力
 
@@ -23,7 +23,7 @@
 
 ```bash
 # 1. 拉代码
-git clone <repo-url> && cd lgtm
+git clone <repo-url> lgtm && cd lgtm
 
 # 2. 装依赖
 make install
