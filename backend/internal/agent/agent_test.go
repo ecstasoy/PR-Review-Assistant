@@ -182,6 +182,82 @@ func TestAgent_Run_NilProvider_ImmediateError(t *testing.T) {
 	}
 }
 
+func TestAgent_Run_CallbacksFireInOrder(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register(&echoTool{name: "echo"})
+
+	p := &scriptedProvider{steps: [][]llm.Chunk{
+		// 第 1 步：流式 text 增量 + tool_call
+		{
+			{Text: "thinking "},
+			{Text: "first..."},
+			{ToolCalls: []llm.ToolCall{{ID: "c1", Name: "echo", Arguments: `{"x":1}`}}},
+		},
+		// 第 2 步：最终答案
+		{{Text: "all done"}},
+	}}
+
+	var (
+		textDeltas []string
+		starts     []llm.ToolCall
+		dones      []struct {
+			call   llm.ToolCall
+			result string
+		}
+	)
+	a := &Agent{
+		Provider: p,
+		Tools:    reg,
+		MaxSteps: 5,
+		OnText: func(_ context.Context, d string) {
+			textDeltas = append(textDeltas, d)
+		},
+		OnToolCallStart: func(_ context.Context, c llm.ToolCall) {
+			starts = append(starts, c)
+		},
+		OnToolCallDone: func(_ context.Context, c llm.ToolCall, r string) {
+			dones = append(dones, struct {
+				call   llm.ToolCall
+				result string
+			}{c, r})
+		},
+	}
+	_, err := a.Run(context.Background(), llm.Request{User: "go"})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	// 文本增量：第 1 步 2 段 + 第 2 步 1 段 = 3 次
+	if len(textDeltas) != 3 {
+		t.Errorf("want 3 text deltas, got %d: %v", len(textDeltas), textDeltas)
+	}
+	if strings.Join(textDeltas, "") != "thinking first...all done" {
+		t.Errorf("text delta order off: %v", textDeltas)
+	}
+
+	// tool callbacks：第 1 步 1 次 start + 1 次 done
+	if len(starts) != 1 || starts[0].ID != "c1" || starts[0].Name != "echo" {
+		t.Errorf("starts=%+v", starts)
+	}
+	if len(dones) != 1 || dones[0].call.ID != "c1" || !strings.Contains(dones[0].result, "echo:") {
+		t.Errorf("dones=%+v", dones)
+	}
+}
+
+func TestAgent_Run_NilCallbacks_Safe(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register(&echoTool{name: "echo"})
+	p := &scriptedProvider{steps: [][]llm.Chunk{
+		{{ToolCalls: []llm.ToolCall{{ID: "c1", Name: "echo", Arguments: `{}`}}}},
+		{{Text: "done"}},
+	}}
+	a := &Agent{Provider: p, Tools: reg, MaxSteps: 5}
+	// 三个 callback 都 nil；不应 panic
+	if _, err := a.Run(context.Background(), llm.Request{User: "go"}); err != nil {
+		t.Fatalf("nil callbacks should be safe: %v", err)
+	}
+}
+
 func TestAgent_Run_MessagesModeOverridesSystemUser(t *testing.T) {
 	// Messages 非空时优先用；System/User 应被忽略
 	p := &scriptedProvider{steps: [][]llm.Chunk{{{Text: "ok"}}}}
