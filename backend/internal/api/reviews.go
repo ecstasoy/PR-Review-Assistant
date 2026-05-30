@@ -35,6 +35,7 @@ type reviewListItem struct {
 	Title      string     `json:"title,omitempty"`
 	CreatedAt  string     `json:"created_at"`
 	CI         string     `json:"ci,omitempty"`
+	Lang       string     `json:"lang,omitempty"` // PR 主语言（detectPrimaryLang 的结果）；/history 语言筛选用
 	RiskCounts riskCounts `json:"risk_counts"`
 }
 
@@ -113,6 +114,7 @@ func ListReviews(d Deps) gin.HandlerFunc {
 			if jerr := json.Unmarshal(r.Payload, &p); jerr == nil {
 				it.Title = p.Title
 				it.CI = p.CI
+				it.Lang = p.Lang
 				it.RiskCounts = countRisksBySeverity(p.Risks)
 			}
 			out = append(out, it)
@@ -155,6 +157,7 @@ func GetReview(d Deps) gin.HandlerFunc {
 				Title:      p.Title,
 				CreatedAt:  rec.CreatedAt.UTC().Format(time.RFC3339),
 				CI:         p.CI,
+				Lang:       p.Lang,
 				RiskCounts: countRisksBySeverity(p.Risks),
 			},
 			Files:       p.Files,
