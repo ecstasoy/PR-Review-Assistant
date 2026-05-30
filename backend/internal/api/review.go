@@ -153,7 +153,7 @@ func PostReview(d Deps) gin.HandlerFunc {
 // prMetaPayload 把 PR meta 打包成 SSE pr event 的 data。
 // 同时被 handler（首帧）和 detail endpoint（缓存命中后给前端兜底头部）共用同一形状。
 func prMetaPayload(pr gh.PullRequest, sourceURL string) map[string]any {
-	return map[string]any{
+	payload := map[string]any{
 		"id":            pr.HeadSHA,
 		"owner":         pr.Owner,
 		"repo":          pr.Repo,
@@ -162,7 +162,6 @@ func prMetaPayload(pr gh.PullRequest, sourceURL string) map[string]any {
 		"head_sha":      pr.HeadSHA,
 		"title":         pr.Title,
 		"author":        pr.Author,
-		"author_role":   pr.AuthorRole,
 		"state":         pr.State,
 		"labels":        pr.Labels,
 		"base_ref":      pr.BaseRef,
@@ -172,6 +171,10 @@ func prMetaPayload(pr gh.PullRequest, sourceURL string) map[string]any {
 		"ci":            pr.CI,
 		"checks":        pr.Checks,
 	}
+	if pr.AuthorRole != "" {
+		payload["author_role"] = pr.AuthorRole
+	}
+	return payload
 }
 
 // persistReview 把本次评审序列化后写入 store；缓存写失败仅记日志，不影响响应。
