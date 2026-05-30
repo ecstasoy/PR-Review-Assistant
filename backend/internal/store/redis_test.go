@@ -98,7 +98,10 @@ func TestRedisCache_Incr_TTL(t *testing.T) {
 	}
 	time.Sleep(100 * time.Millisecond)
 	// 过期后再 Incr 应该重新从 1 开始
-	n, _ = c.Incr(ctx, "k", 50*time.Millisecond)
+	n, err = c.Incr(ctx, "k", 50*time.Millisecond)
+	if err != nil {
+		t.Fatalf("incr after ttl: %v", err)
+	}
 	if n != 1 {
 		t.Errorf("post-expire incr should reset to 1, got %d", n)
 	}
