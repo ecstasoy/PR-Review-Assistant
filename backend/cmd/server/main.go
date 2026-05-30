@@ -105,25 +105,43 @@ func buildDeps(cfg config.Config) api.Deps {
 		Provider: provider,
 		Builder:  prctx.NewLayeredBuilder(),
 	}
-	// 确保 SQLite 文件的父目录存在；sqlite3 自己不会建目录
-	if cfg.SQLitePath != ":memory:" {
-		if dir := filepath.Dir(cfg.SQLitePath); dir != "" && dir != "." {
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				slog.Warn("ensure sqlite dir failed", "dir", dir, "err", err)
-			}
+	// Store 二选一：POSTGRES_URL 非空走 PostgresStore，否则走 SQLite
+	// 失败时仅 warn，handler 已 nil-safe；缓存 + 历史功能降级停用而非整个服务挂
+	if cfg.PostgresURL != "" {
+		if s, err := store.NewPostgresStore(cfg.PostgresURL); err != nil {
+			slog.Error("open postgres store failed; falling back to SQLite", "err", err)
+			deps.Store = openSQLiteFallback(cfg.SQLitePath)
+		} else {
+			slog.Info("store ready", "type", "postgres")
+			deps.Store = s
 		}
-	}
-	if s, err := store.NewSQLiteStore(cfg.SQLitePath); err != nil {
-		slog.Warn("open sqlite store failed; cache + history disabled", "path", cfg.SQLitePath, "err", err)
 	} else {
-		slog.Info("store ready", "path", cfg.SQLitePath)
-		deps.Store = s
+		deps.Store = openSQLiteFallback(cfg.SQLitePath)
 	}
 	// Cache：用于 rate limit 计数（middleware）+ 未来 SSE session 状态。
 	// v3 当 cfg.RedisURL 非空时切到 RedisCache 跨实例共享；目前固定走 MemoryCache
 	deps.Cache = store.NewMemoryCache(0)
 	slog.Info("cache ready", "type", "memory")
 	return deps
+}
+
+// openSQLiteFallback 公用 SQLite 打开逻辑：确保父目录存在 + 打开 + warn 失败 → nil
+// 抽出来方便 buildDeps 内两条分支复用
+func openSQLiteFallback(path string) store.Store {
+	if path != ":memory:" {
+		if dir := filepath.Dir(path); dir != "" && dir != "." {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				slog.Warn("ensure sqlite dir failed", "dir", dir, "err", err)
+			}
+		}
+	}
+	s, err := store.NewSQLiteStore(path)
+	if err != nil {
+		slog.Warn("open sqlite store failed; cache + history disabled", "path", path, "err", err)
+		return nil
+	}
+	slog.Info("store ready", "type", "sqlite", "path", path)
+	return s
 }
 
 func pickProvider(cfg config.Config) llm.Provider {
