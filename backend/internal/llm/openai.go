@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 )
 
@@ -26,6 +27,8 @@ func NewOpenAIProvider(baseURL, apiKey, model string) *OpenAIProvider {
 }
 
 // Stream 以 stream=true 发起 chat completion，按 SSE 推送 delta。
+// 支持 function calling：Request.Tools 非空时把 tools 传给 OpenAI，
+// 收到 tool_calls 累积完成后在 Done 帧之前 emit 一帧 Chunk{ToolCalls: [...]}。
 func (p *OpenAIProvider) Stream(ctx context.Context, req Request) (<-chan Chunk, error) {
 	body, err := buildRequestBody(req, p.Model)
 	if err != nil {
@@ -61,12 +64,51 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request) (<-chan Chunk,
 
 // streamSSE 按行扫描 SSE body，解析 `data: {...}` 推到 ch。
 // 在 ctx 取消 / `[DONE]` / EOF 时退出并 close(ch)。
+//
+// Tool calls 累积逻辑：OpenAI 流式按 index 分片传 tool_calls；
+// 每个 index 累 id/name/arguments 字符串，到 finish_reason="tool_calls" 或 [DONE] 时
+// 整理成完整 ToolCall 列表 emit 一帧（不增量推，避免前端解析半截 JSON）。
 func streamSSE(ctx context.Context, body io.ReadCloser, ch chan<- Chunk) {
 	defer body.Close()
 	defer close(ch)
 
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 4096), 1<<20)
+
+	// 按 index 累积 tool_calls；OpenAI 协议 index 是稳定整数键
+	type partialCall struct {
+		id        string
+		name      string
+		arguments strings.Builder
+	}
+	partials := map[int]*partialCall{}
+	var sawToolCalls bool
+
+	flushToolCalls := func() {
+		if !sawToolCalls || len(partials) == 0 {
+			return
+		}
+		idxs := make([]int, 0, len(partials))
+		for k := range partials {
+			idxs = append(idxs, k)
+		}
+		sort.Ints(idxs)
+		calls := make([]ToolCall, 0, len(idxs))
+		for _, i := range idxs {
+			p := partials[i]
+			calls = append(calls, ToolCall{
+				ID:        p.id,
+				Name:      p.name,
+				Arguments: p.arguments.String(),
+			})
+		}
+		select {
+		case <-ctx.Done():
+		case ch <- Chunk{ToolCalls: calls}:
+		}
+		partials = map[int]*partialCall{}
+		sawToolCalls = false
+	}
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -78,6 +120,7 @@ func streamSSE(ctx context.Context, body io.ReadCloser, ch chan<- Chunk) {
 			continue
 		}
 		if data == "[DONE]" {
+			flushToolCalls()
 			select {
 			case <-ctx.Done():
 			case ch <- Chunk{Done: true}:
@@ -90,14 +133,35 @@ func streamSSE(ctx context.Context, body io.ReadCloser, ch chan<- Chunk) {
 			continue // 跳过非法 JSON
 		}
 		for _, choice := range delta.Choices {
-			text := choice.Delta.Content
-			if text == "" {
-				continue
+			// content delta
+			if t := choice.Delta.Content; t != "" {
+				select {
+				case <-ctx.Done():
+					return
+				case ch <- Chunk{Text: t}:
+				}
 			}
-			select {
-			case <-ctx.Done():
-				return
-			case ch <- Chunk{Text: text}:
+			// tool_calls delta：按 index 累积
+			for _, tc := range choice.Delta.ToolCalls {
+				sawToolCalls = true
+				p, ok := partials[tc.Index]
+				if !ok {
+					p = &partialCall{}
+					partials[tc.Index] = p
+				}
+				if tc.ID != "" {
+					p.id = tc.ID
+				}
+				if tc.Function.Name != "" {
+					p.name = tc.Function.Name
+				}
+				if tc.Function.Arguments != "" {
+					p.arguments.WriteString(tc.Function.Arguments)
+				}
+			}
+			// finish_reason="tool_calls" → 本轮聚合完，提前 flush（仍等 [DONE] 终止流）
+			if choice.FinishReason == "tool_calls" {
+				flushToolCalls()
 			}
 		}
 	}
@@ -111,52 +175,125 @@ func streamSSE(ctx context.Context, body io.ReadCloser, ch chan<- Chunk) {
 }
 
 // buildRequestBody 拼接 chat completions 请求体 JSON。
+// Messages 非空时用它；否则回退 System+User 单轮兼容 v1/v2 stage 调用。
 func buildRequestBody(req Request, defaultModel string) ([]byte, error) {
 	model := req.Model
 	if model == "" {
 		model = defaultModel
 	}
-	msgs := make([]openAIMessage, 0, 2)
-	if req.System != "" {
-		msgs = append(msgs, openAIMessage{Role: "system", Content: req.System})
+
+	var msgs []openAIMessage
+	if len(req.Messages) > 0 {
+		msgs = make([]openAIMessage, 0, len(req.Messages))
+		for _, m := range req.Messages {
+			om := openAIMessage{Role: m.Role, Content: m.Content, Name: m.Name, ToolCallID: m.ToolCallID}
+			for _, tc := range m.ToolCalls {
+				om.ToolCalls = append(om.ToolCalls, openAIToolCall{
+					ID:   tc.ID,
+					Type: "function",
+					Function: openAIFunctionCall{
+						Name:      tc.Name,
+						Arguments: tc.Arguments,
+					},
+				})
+			}
+			msgs = append(msgs, om)
+		}
+	} else {
+		msgs = make([]openAIMessage, 0, 2)
+		if req.System != "" {
+			msgs = append(msgs, openAIMessage{Role: "system", Content: req.System})
+		}
+		if req.User != "" {
+			msgs = append(msgs, openAIMessage{Role: "user", Content: req.User})
+		}
 	}
-	if req.User != "" {
-		msgs = append(msgs, openAIMessage{Role: "user", Content: req.User})
-	}
+
 	body := openAIChatRequest{
 		Model:       model,
 		Messages:    msgs,
 		Temperature: req.Temperature,
 		Stream:      true,
 	}
-	// 有 JSONSchema 时启用 JSON 输出模式
-	if req.JSONSchema != nil {
+	// Tools 优先于 JSONSchema（function calling 自带结构化）
+	if len(req.Tools) > 0 {
+		body.Tools = make([]openAITool, 0, len(req.Tools))
+		for _, t := range req.Tools {
+			body.Tools = append(body.Tools, openAITool{
+				Type: "function",
+				Function: openAIFunctionDef{
+					Name:        t.Name,
+					Description: t.Description,
+					Parameters:  t.Parameters,
+				},
+			})
+		}
+	} else if req.JSONSchema != nil {
 		body.ResponseFormat = &openAIResponseFormat{Type: "json_object"}
 	}
 	return json.Marshal(body)
 }
+
+// OpenAI chat completions 请求 / 响应类型
+// 一组放一起，方便维护
 
 type openAIChatRequest struct {
 	Model          string                `json:"model"`
 	Messages       []openAIMessage       `json:"messages"`
 	Temperature    float32               `json:"temperature,omitempty"`
 	Stream         bool                  `json:"stream"`
+	Tools          []openAITool          `json:"tools,omitempty"`
 	ResponseFormat *openAIResponseFormat `json:"response_format,omitempty"`
 }
 
 type openAIMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string           `json:"role"`
+	Content    string           `json:"content,omitempty"`
+	Name       string           `json:"name,omitempty"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
+	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
 }
 
 type openAIResponseFormat struct {
 	Type string `json:"type"`
 }
 
+type openAITool struct {
+	Type     string            `json:"type"` // "function"
+	Function openAIFunctionDef `json:"function"`
+}
+
+type openAIFunctionDef struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
+}
+
+type openAIToolCall struct {
+	ID       string             `json:"id,omitempty"`
+	Type     string             `json:"type,omitempty"` // "function"
+	Function openAIFunctionCall `json:"function"`
+}
+
+type openAIFunctionCall struct {
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments,omitempty"` // raw JSON string
+}
+
+// streaming SSE delta
 type openAIStreamChunk struct {
 	Choices []struct {
 		Delta struct {
-			Content string `json:"content"`
+			Content   string                  `json:"content,omitempty"`
+			ToolCalls []openAIDeltaToolCall   `json:"tool_calls,omitempty"`
 		} `json:"delta"`
+		FinishReason string `json:"finish_reason,omitempty"`
 	} `json:"choices"`
+}
+
+type openAIDeltaToolCall struct {
+	Index    int                `json:"index"`
+	ID       string             `json:"id,omitempty"`
+	Type     string             `json:"type,omitempty"`
+	Function openAIFunctionCall `json:"function"`
 }

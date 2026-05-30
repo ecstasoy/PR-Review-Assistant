@@ -12,11 +12,8 @@ import (
 )
 
 // ToolSpec OpenAI function-calling 风格的工具描述。
-type ToolSpec struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	Parameters  json.RawMessage `json:"parameters"`
-}
+// 直接复用 llm 包的同形状定义：Registry.Specs() 可直传 llm.Request.Tools。
+type ToolSpec = llm.ToolSpec
 
 // Tool 一项可调用能力。
 type Tool interface {
