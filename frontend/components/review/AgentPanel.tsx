@@ -88,9 +88,11 @@ export function AgentPanel({ onClose, reviewId }: Props) {
             ]);
           },
           onToolCallDone: (call) => {
-            setMsgs((m) =>
-              m.map((msg) => {
+            setMsgs((m) => {
+              let found = false;
+              const next = m.map((msg) => {
                 if (msg.role === "tool" && msg.tool?.id === call.id) {
+                  found = true;
                   return {
                     ...msg,
                     tool: {
@@ -101,8 +103,22 @@ export function AgentPanel({ onClose, reviewId }: Props) {
                   };
                 }
                 return msg;
-              }),
-            );
+              });
+              if (found) return next;
+              return [
+                ...next,
+                {
+                  role: "tool",
+                  text: call.name,
+                  tool: {
+                    id: call.id,
+                    name: call.name,
+                    result: call.result,
+                    status: call.result?.startsWith("error:") ? "error" : "done",
+                  },
+                },
+              ];
+            });
           },
           onInfo: (info) => {
             // 后端两条 info：开头是 "Agent 启动..."（忽略）；结束是 "Agent 完成（N 步）：..."（assistant）
