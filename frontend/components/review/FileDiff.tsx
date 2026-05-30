@@ -6,7 +6,7 @@ import { AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
 import type { File, Risk, Suggestion } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { parsePatch, type DiffLine as DiffLineModel } from "@/lib/parsePatch";
-import { highlightCode, langFromPath } from "@/lib/highlight";
+import { highlightHTML, langFromPath } from "@/lib/highlight";
 import { FileStatusBadge } from "@/components/ui/file-status-badge";
 import { InlineSuggestion } from "./InlineSuggestion";
 
@@ -107,22 +107,6 @@ const sevBar: Record<Risk["severity"], string> = {
   low: "bg-low",
 };
 
-// tokenClass syntax token → Tailwind class（颜色取 globals.css @theme 暴露的 --tok-*）
-function tokenClass(kind: "kw" | "str" | "num" | "com" | "text"): string {
-  switch (kind) {
-    case "kw":
-      return "text-tok-kw font-semibold";
-    case "str":
-      return "text-tok-str";
-    case "num":
-      return "text-tok-num";
-    case "com":
-      return "italic text-tok-com";
-    default:
-      return "";
-  }
-}
-
 function DiffRow({
   line,
   sevHit,
@@ -180,13 +164,10 @@ function DiffRow({
       >
         {sign}
       </span>
-      <code className="overflow-x-auto whitespace-pre-wrap break-words px-1.5 pr-3 font-mono text-[12.5px] text-text">
-        {highlightCode(line.text || " ", lang).map((tok, i) => (
-          <span key={i} className={tokenClass(tok.kind)}>
-            {tok.text}
-          </span>
-        ))}
-      </code>
+      <code
+        className="hljs overflow-x-auto whitespace-pre-wrap break-words px-1.5 pr-3 font-mono text-[12.5px] text-text"
+        dangerouslySetInnerHTML={{ __html: highlightHTML(line.text || " ", lang) }}
+      />
     </div>
   );
 }
