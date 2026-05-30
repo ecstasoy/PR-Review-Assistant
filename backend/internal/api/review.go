@@ -152,7 +152,10 @@ func PostReview(d Deps) gin.HandlerFunc {
 		// 在跑 LLM 前发预算帧，让前端会话视图可以立刻把上下文步骤切到"已完成"+显示真实 L1/L2/L3/L4
 		writeSSE(c.Writer, "budget_report", budget)
 		c.Writer.Flush()
-		merged := mergeStages(ctx, pCtx, d.Provider)
+		// per-stage RAG query：risks/suggestions 重算 L4（用不同 query），summary 用 baseCtx
+		// 多两次 retrieve 调用换更对题的召回；首字节延迟代价 < 200ms
+		ctxByStage := buildPerStageContexts(ctx, builder, pr, pCtx)
+		merged := mergeStages(ctx, ctxByStage, d.Provider)
 
 		// 边推流边收集供后续 cache 写入；stage 任一报错则不写缓存（避免缓存半残结果）
 		var (
@@ -283,9 +286,67 @@ func persistReview(s store.Store, pr gh.PullRequest, summary string, risks, sugg
 	}
 }
 
+// stageRAGQueryFor 不同 stage 用不同 RAG query；空返回 = caller fallback 到默认 L1Meta。
+// 设计：
+//   - summary 看的是全局摘要，PR meta 已经够好；不覆盖
+//   - risks 关注 bug/race/security，query 引导召回相关风险代码
+//   - suggestions 关注重构/优化，query 引导召回相关 patterns
+func stageRAGQueryFor(name string, pr gh.PullRequest) string {
+	switch name {
+	case "risks":
+		return "潜在 bug / 并发 race / 安全漏洞 / 资源泄漏 / 错误处理缺失，相关文件：" + summarizePRFiles(pr.Files)
+	case "suggestions":
+		return "重构机会 / 代码改进 / 性能优化 / 可读性提升 / 设计模式，相关文件：" + summarizePRFiles(pr.Files)
+	default:
+		return ""
+	}
+}
+
+// summarizePRFiles 把改动文件 path 压成一行短串作 RAG query 后缀；只取前 8 个免过长
+func summarizePRFiles(files []gh.File) string {
+	const maxN = 8
+	paths := make([]string, 0, maxN)
+	for i, f := range files {
+		if i >= maxN {
+			break
+		}
+		paths = append(paths, f.Path)
+	}
+	return strings.Join(paths, ", ")
+}
+
+// buildPerStageContexts 为每个 stage 准备 prctx.Context；summary 直接复用 base，risks/suggestions 用各自 query 重算
+// 重算失败时回退 base —— RAG 错误不应阻断评审
+func buildPerStageContexts(
+	ctx context.Context,
+	builder prctx.Builder,
+	pr gh.PullRequest,
+	base prctx.Context,
+) map[string]prctx.Context {
+	out := map[string]prctx.Context{
+		"summary": base,
+	}
+	for _, name := range []string{"risks", "suggestions"} {
+		q := stageRAGQueryFor(name, pr)
+		if q == "" {
+			out[name] = base
+			continue
+		}
+		stageCtx, err := builder.BuildWith(ctx, pr, prctx.BuildOptions{RAGQuery: q})
+		if err != nil {
+			slog.Warn("per-stage prctx build failed; falling back to base", "stage", name, "err", err)
+			out[name] = base
+			continue
+		}
+		out[name] = stageCtx
+	}
+	return out
+}
+
 // mergeStages 并发跑 summary + risks + suggestions，把各自的事件归并到一个 channel。
 // 任一 stage 失败会发一帧 error event 而非中止整条流。
-func mergeStages(ctx context.Context, c prctx.Context, p llm.Provider) <-chan review.Event {
+// ctxByStage 按 Stage.Name() 选 prctx.Context；缺失 key 回退到 ctxByStage["summary"]
+func mergeStages(ctx context.Context, ctxByStage map[string]prctx.Context, p llm.Provider) <-chan review.Event {
 	merged := make(chan review.Event, 16)
 	var wg sync.WaitGroup
 
@@ -294,8 +355,13 @@ func mergeStages(ctx context.Context, c prctx.Context, p llm.Provider) <-chan re
 		review.RisksStage{},
 		review.SuggestionsStage{},
 	}
+	fallback := ctxByStage["summary"]
 	wg.Add(len(stages))
 	for _, s := range stages {
+		c, ok := ctxByStage[s.Name()]
+		if !ok {
+			c = fallback
+		}
 		go forwardStage(ctx, c, p, s, merged, &wg)
 	}
 
