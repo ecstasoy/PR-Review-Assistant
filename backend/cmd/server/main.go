@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	sentrygin "github.com/getsentry/sentry-go/gin"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 
@@ -53,6 +54,18 @@ func main() {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(gin.Logger())
+
+	if cleanup, err := observability.InitSentry(observability.SentryConfig{
+		DSN:         cfg.SentryDSN,
+		Environment: cfg.Environment,
+	}); err != nil {
+		slog.Warn("sentry init failed; continuing without sentry", "err", err)
+	} else {
+		defer cleanup()
+		if cfg.SentryDSN != "" {
+			r.Use(sentrygin.New(sentrygin.Options{Repanic: true}))
+		}
+	}
 
 	// 配置受信代理：用于 c.ClientIP() 正确解析 X-Forwarded-For。
 	// 未配置时显式禁用代理信任，退回 RemoteAddr 解析。
