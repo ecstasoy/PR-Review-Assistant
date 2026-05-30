@@ -89,7 +89,10 @@ func TestRedisCache_Incr(t *testing.T) {
 func TestRedisCache_Incr_TTL(t *testing.T) {
 	c := redisTestCache(t)
 	ctx := context.Background()
-	n, _ := c.Incr(ctx, "k", 50*time.Millisecond)
+	n, err := c.Incr(ctx, "k", 50*time.Millisecond)
+	if err != nil {
+		t.Fatalf("incr: %v", err)
+	}
 	if n != 1 {
 		t.Fatalf("first incr should be 1, got %d", n)
 	}
