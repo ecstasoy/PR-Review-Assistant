@@ -606,10 +606,10 @@ function SteerComposer({
                 key={s}
                 type="button"
                 onClick={() => setStage(s)}
+                aria-pressed={stage === s}
                 className={cn(
                   "rounded-sm px-2 py-[3px] font-mono text-[10.5px] transition-colors",
                   stage === s ? "bg-surface text-text" : "text-muted hover:text-text",
-                )}
               >
                 {s === "risks" ? "重评风险" : "重出建议"}
               </button>
