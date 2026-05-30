@@ -89,10 +89,12 @@ export function AgentSessionView({
   // steer 历史：每条引导一个步骤；状态机由 streamSteer 回调驱动
   const [steerHistory, setSteerHistory] = useState<SteerEntry[]>([]);
   const [steerInFlight, setSteerInFlight] = useState(false);
+  const steerInFlightRef = useRef(false);
 
   const handleSteerSend = useCallback(
     async (text: string, stage: "risks" | "suggestions") => {
-      if (!reviewId || steerInFlight) return;
+      if (!reviewId || steerInFlightRef.current) return;
+      steerInFlightRef.current = true;
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       setSteerHistory((prev) => [...prev, { id, text, stage, status: "running" }]);
       setSteerInFlight(true);
@@ -125,10 +127,11 @@ export function AgentSessionView({
       } catch (e) {
         markError(e instanceof Error ? e.message : String(e));
       } finally {
+        steerInFlightRef.current = false;
         setSteerInFlight(false);
       }
     },
-    [reviewId, steerInFlight, onSteeredRisks, onSteeredSuggestions],
+    [reviewId, onSteeredRisks, onSteeredSuggestions],
   );
 
   const finished = !streaming && suggestionsDone;
