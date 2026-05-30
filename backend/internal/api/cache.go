@@ -20,6 +20,7 @@ type cachedPayload struct {
 	Title       string          `json:"title,omitempty"`
 	Author      string          `json:"author,omitempty"`
 	AuthorRole  string          `json:"author_role,omitempty"`
+	Lang        string          `json:"lang,omitempty"` // PR 主语言（按文件后缀多数派算），/history 语言筛选用
 	State       string          `json:"state,omitempty"`
 	Labels      []string        `json:"labels,omitempty"`
 	BaseRef     string          `json:"base_ref,omitempty"`
