@@ -83,12 +83,13 @@ export interface ReviewSummary {
   title?: string;
   created_at: string; // RFC3339（评审记录创建时间）
   ci?: string;
+  lang?: string; // PR 主语言（Go / TypeScript / Python / …）；后端按文件后缀多数派算
   risk_counts?: { high: number; medium: number; low: number };
 }
 
 // ReviewDetail /api/reviews/:id 详情；inline 缓存 payload + 全套 PR meta
 export interface ReviewDetail extends ReviewSummary {
-  // PR meta（A1+A2+A3+author_role）
+  // PR meta（A1+A2+A3+author_role+lang）
   author?: string;
   author_role?: string;
   state?: string;
