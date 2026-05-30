@@ -86,7 +86,7 @@ function ListBody({
 function RecentRow({ item, isFirst }: { item: SummaryWithCounts; isFirst: boolean }) {
   return (
     <Link
-      href={`/history/${item.id}`}
+      href={`/review/${item.id}`}
       className={`flex items-center gap-3 px-3.5 py-2.5 transition-colors hover:bg-surface-hover ${
         isFirst ? "" : "border-t border-border"
       }`}
