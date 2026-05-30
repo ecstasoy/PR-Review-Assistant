@@ -25,6 +25,9 @@ type Cache interface {
 // ErrCacheClosed 用 ctx.Done 通常足够；这个 error 是给未来 Redis 连接断开 / 重连失败用的占位。
 var ErrCacheClosed = errors.New("cache: closed")
 
+// ErrIncrOnNonCounter is returned when Incr is called on a key that was written via Set.
+var ErrIncrOnNonCounter = errors.New("cache: Incr called on non-counter key")
+
 // MemoryCache v1 内存实现。
 //
 // 特性：
@@ -77,11 +80,15 @@ func (c *MemoryCache) Get(_ context.Context, key string) ([]byte, bool, error) {
 		c.items.Delete(key)
 		return nil, false, nil
 	}
-	return it.value, true, nil
+	cp := make([]byte, len(it.value))
+	copy(cp, it.value)
+	return cp, true, nil
 }
 
 func (c *MemoryCache) Set(_ context.Context, key string, value []byte, ttl time.Duration) error {
-	it := &cacheItem{value: value}
+	cp := make([]byte, len(value))
+	copy(cp, value)
+	it := &cacheItem{value: cp}
 	if ttl > 0 {
 		it.expiresAt = time.Now().Add(ttl)
 	}
@@ -96,6 +103,9 @@ func (c *MemoryCache) Incr(_ context.Context, key string, ttl time.Duration) (in
 	if v, ok := c.items.Load(key); ok {
 		it := v.(*cacheItem)
 		if it.expiresAt.IsZero() || now.Before(it.expiresAt) {
+			if !it.isCounter {
+				return 0, ErrIncrOnNonCounter
+			}
 			it.intValue++
 			it.isCounter = true
 			c.items.Store(key, it)

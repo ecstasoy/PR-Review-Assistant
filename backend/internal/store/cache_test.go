@@ -37,8 +37,8 @@ func TestMemoryCache_TTLExpires(t *testing.T) {
 	defer c.Close()
 	ctx := context.Background()
 
-	_ = c.Set(ctx, "ephemeral", []byte("x"), 10*time.Millisecond)
-	time.Sleep(30 * time.Millisecond)
+	_ = c.Set(ctx, "ephemeral", []byte("x"), 200*time.Millisecond)
+	time.Sleep(400 * time.Millisecond)
 	_, ok, _ := c.Get(ctx, "ephemeral")
 	if ok {
 		t.Errorf("ttl expired entry should be invisible")
@@ -66,13 +66,13 @@ func TestMemoryCache_Incr_TTL(t *testing.T) {
 	defer c.Close()
 	ctx := context.Background()
 
-	n, _ := c.Incr(ctx, "k", 10*time.Millisecond)
+	n, _ := c.Incr(ctx, "k", 200*time.Millisecond)
 	if n != 1 {
 		t.Fatalf("first incr should be 1, got %d", n)
 	}
-	time.Sleep(30 * time.Millisecond)
+	time.Sleep(400 * time.Millisecond)
 	// 过期后再 Incr 应该重新从 1 开始
-	n, _ = c.Incr(ctx, "k", 10*time.Millisecond)
+	n, _ = c.Incr(ctx, "k", 200*time.Millisecond)
 	if n != 1 {
 		t.Errorf("post-expire incr should reset to 1, got %d", n)
 	}
