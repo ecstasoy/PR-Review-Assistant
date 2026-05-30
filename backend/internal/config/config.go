@@ -57,6 +57,10 @@ type Config struct {
 	EmbeddingBaseURL  string `env:"EMBEDDING_BASE_URL" envDefault:"https://api.openai.com"`
 	EmbeddingAPIKey   string `env:"EMBEDDING_API_KEY"`
 	EmbeddingModel    string `env:"EMBEDDING_MODEL" envDefault:"text-embedding-3-small"`
+
+	// RAG 索引 SQLite 文件路径；空时关闭 Retriever（prctx 跳 L4）
+	// 与 SQLITE_PATH 分开：让 RAG 数据库即使切到 Postgres store 也仍能用 SQLite vector 存
+	RAGDBPath string `env:"RAG_DB_PATH" envDefault:"./data/rag.db"`
 }
 
 // MustLoad 解析环境变量；失败则打印错误并退出进程。

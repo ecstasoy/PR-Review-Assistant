@@ -8,12 +8,13 @@ import "context"
 type Reference struct {
 	File    string // 源文件路径
 	Snippet string // 检索命中的代码 / 文档片段
-	Reason  string // 为什么命中（"defines X" / "calls Y"）
+	Reason  string // 为什么命中（"defines X" / "calls Y" / "cosine=0.83"）
 }
 
-// Retriever 按 query 召回最多 k 条 Reference。
+// Retriever 按 scope + query 召回最多 k 条 Reference。
+// scope 是命名空间（如 "owner/repo"），避免跨仓库串扰；空 scope 不限。
 type Retriever interface {
-	Retrieve(ctx context.Context, query string, k int) ([]Reference, error)
+	Retrieve(ctx context.Context, scope, query string, k int) ([]Reference, error)
 }
 
 // Embedder 批量产出文本向量。
@@ -26,6 +27,6 @@ type Embedder interface {
 type NoopRetriever struct{}
 
 // Retrieve 实现 Retriever。
-func (NoopRetriever) Retrieve(_ context.Context, _ string, _ int) ([]Reference, error) {
+func (NoopRetriever) Retrieve(_ context.Context, _, _ string, _ int) ([]Reference, error) {
 	return nil, nil
 }

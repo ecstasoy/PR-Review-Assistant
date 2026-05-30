@@ -16,13 +16,15 @@ import (
 // Store 可为 nil（关闭缓存 + 历史功能），handler 必须 nil-safe。
 // Cache 可为 nil（限流中间件降级 pass-through）；生产环境应注入 MemoryCache 或 RedisCache
 // Embedder 可为 nil（RAG 关闭）；B1 引入用于 B2/B3 RAG retriever
+// Retriever 可为 nil（RAG 关闭）；缺失时 prctx 跳 L4
 type Deps struct {
-	Fetcher  github.Fetcher
-	Provider llm.Provider
-	Builder  prctx.Builder
-	Store    store.Store
-	Cache    store.Cache
-	Embedder index.Embedder
+	Fetcher   github.Fetcher
+	Provider  llm.Provider
+	Builder   prctx.Builder
+	Store     store.Store
+	Cache     store.Cache
+	Embedder  index.Embedder
+	Retriever index.Retriever
 }
 
 // Register 挂载 /api 路由组。

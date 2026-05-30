@@ -136,6 +136,24 @@ func buildDeps(cfg config.Config) api.Deps {
 	}
 	// Embedder：v3 RAG 用。缺 key / EMBEDDING_PROVIDER=mock 走 mock；openai 需 EMBEDDING_API_KEY
 	deps.Embedder = pickEmbedder(cfg)
+	// Retriever：sqlite-backed brute-force cosine；失败降级 NoopRetriever
+	if cfg.RAGDBPath != "" {
+		if dir := filepath.Dir(cfg.RAGDBPath); dir != "" && dir != "." {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				slog.Warn("ensure rag dir failed", "dir", dir, "err", err)
+			}
+		}
+		if rt, err := index.NewSQLiteRetriever(cfg.RAGDBPath, deps.Embedder); err != nil {
+			slog.Error("open rag retriever failed; using NoopRetriever", "err", err)
+			deps.Retriever = index.NoopRetriever{}
+		} else {
+			deps.Retriever = rt
+			slog.Info("retriever ready", "type", "sqlite", "path", cfg.RAGDBPath)
+		}
+	} else {
+		deps.Retriever = index.NoopRetriever{}
+		slog.Info("retriever ready", "type", "noop")
+	}
 	return deps
 }
 
