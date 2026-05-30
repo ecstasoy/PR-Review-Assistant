@@ -140,7 +140,8 @@ func PostSteer(d Deps) gin.HandlerFunc {
 		if builder == nil {
 			builder = prctx.NewLayeredBuilder()
 		}
-		pCtx, err := builder.Build(ctx, pr)
+		// P2: 用用户输入作 RAG query，让追问 / steer 召回更对题（而非默认的 PR 元信息）
+		pCtx, err := builder.BuildWith(ctx, pr, prctx.BuildOptions{RAGQuery: text})
 		if err != nil {
 			slog.Error("steer build prctx", "err", err, "id", id)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "build context failed"})
