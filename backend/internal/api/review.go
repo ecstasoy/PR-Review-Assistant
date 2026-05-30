@@ -109,7 +109,7 @@ func PostReview(d Deps) gin.HandlerFunc {
 			slog.Warn("prctx dropped large files", "files", pCtx.BudgetReport.Dropped, "limit", pCtx.BudgetReport.TokenLimit)
 		}
 		budget := toBudgetPayload(pCtx.BudgetReport)
-		// 在跑 LLM 前发预算帧，让前端会话视图可以立刻把上下文步骤切到"已完成"+显示真实 L1/L2/L3
+		// 在跑 LLM 前发预算帧，让前端会话视图可以立刻把上下文步骤切到"已完成"+显示真实 L1/L2/L3/L4
 		writeSSE(c.Writer, "budget_report", budget)
 		c.Writer.Flush()
 		merged := mergeStages(ctx, pCtx, d.Provider)
@@ -154,7 +154,7 @@ func PostReview(d Deps) gin.HandlerFunc {
 	}
 }
 
-// budgetReportPayload 三层 token 预算 SSE 帧 + 缓存 payload 共用形状。
+// budgetReportPayload 分层 token 预算 SSE 帧 + 缓存 payload 共用形状。
 // 与 prctx.BudgetReport 同字段但带 snake_case json tag，避免把内部 pkg 字段名暴露给传输层。
 type budgetReportPayload struct {
 	TokenLimit int      `json:"token_limit"`
@@ -165,7 +165,7 @@ type budgetReportPayload struct {
 	Dropped    []string `json:"dropped,omitempty"`
 }
 
-// toBudgetPayload 把 prctx.BudgetReport 转成 API 形状；nil 安全。
+// toBudgetPayload 把 prctx.BudgetReport 转成 API 形状；零值安全。
 func toBudgetPayload(b prctx.BudgetReport) *budgetReportPayload {
 	return &budgetReportPayload{
 		TokenLimit: b.TokenLimit,
