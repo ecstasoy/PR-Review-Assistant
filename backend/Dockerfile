@@ -28,6 +28,10 @@ RUN apk add --no-cache ca-certificates tzdata
 
 # 非 root 用户
 RUN addgroup -g 1000 app && adduser -u 1000 -G app -D -h /app app
+
+# 数据目录在切换用户前创建并赋权，确保挂卷后 app 进程可写
+RUN mkdir -p /app/data && chown app:app /app/data
+
 USER app
 WORKDIR /app
 

@@ -3,5 +3,3 @@ bin/
 .env
 .env.*
 !.env.example
-*_test.go
-testdata/
