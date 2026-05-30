@@ -43,6 +43,11 @@ type Config struct {
 	SentryDSN    string `env:"SENTRY_DSN"`
 	OTLPEndpoint string `env:"OTLP_ENDPOINT"`                        // OTel collector 地址，如 http://otel-collector:4318
 	Environment  string `env:"ENVIRONMENT" envDefault:"development"` // dev / staging / prod，给 Sentry tag 用
+
+	// TrustedProxies 信任的反代 IP/CIDR 列表（逗号分隔）；
+	// 用于 c.ClientIP() 正确解析 X-Forwarded-For。
+	// 空字符串（默认）表示不信任任何代理，直接取 RemoteAddr。
+	TrustedProxies string `env:"TRUSTED_PROXIES" envDefault:""`
 }
 
 // MustLoad 解析环境变量；失败则打印错误并退出进程。

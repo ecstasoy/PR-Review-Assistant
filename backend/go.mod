@@ -9,6 +9,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/mattn/go-sqlite3 v1.14.44
 	github.com/oklog/ulid/v2 v2.1.1
+	golang.org/x/time v0.15.0
 )
 
 require (

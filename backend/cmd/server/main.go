@@ -39,6 +39,26 @@ func main() {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(gin.Logger())
+
+	// 配置受信代理：用于 c.ClientIP() 正确解析 X-Forwarded-For。
+	// 未配置时显式禁用代理信任，退回 RemoteAddr 解析。
+	if cfg.TrustedProxies == "" {
+		if err := r.SetTrustedProxies(nil); err != nil {
+			slog.Warn("set trusted proxies failed", "err", err)
+		}
+	} else {
+		raw := strings.Split(cfg.TrustedProxies, ",")
+		proxies := make([]string, 0, len(raw))
+		for _, p := range raw {
+			if p = strings.TrimSpace(p); p != "" {
+				proxies = append(proxies, p)
+			}
+		}
+		if err := r.SetTrustedProxies(proxies); err != nil {
+			slog.Warn("set trusted proxies failed", "err", err)
+		}
+	}
+
 	api.Register(r, deps)
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
