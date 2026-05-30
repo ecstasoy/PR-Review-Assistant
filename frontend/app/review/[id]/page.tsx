@@ -6,9 +6,10 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { getReview } from "@/lib/api";
 import { streamReview } from "@/lib/sse";
-import type { File, PrMeta, Risk, ReviewDetail, Suggestion } from "@/lib/types";
+import type { BudgetReport, File, PrMeta, Risk, ReviewDetail, Suggestion } from "@/lib/types";
 import { ReviewTopBar, type ViewKey } from "@/components/review/ReviewTopBar";
 import { Sidebar } from "@/components/review/Sidebar";
+import { SessionList } from "@/components/review/SessionList";
 import { SummaryCard } from "@/components/review/SummaryCard";
 import { RisksList } from "@/components/review/RisksList";
 import { DiffView } from "@/components/review/DiffView";
@@ -56,6 +57,7 @@ function ReviewDetailPageContent({ id }: { id: string }) {
   const [risks, setRisks] = useState<Risk[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [files, setFiles] = useState<File[]>([]);
+  const [budget, setBudget] = useState<BudgetReport | null>(null);
   const [summaryDone, setSummaryDone] = useState(false);
   const [risksDone, setRisksDone] = useState(false);
   const [suggestionsDone, setSuggestionsDone] = useState(false);
@@ -88,6 +90,7 @@ function ReviewDetailPageContent({ id }: { id: string }) {
       streamReview(sourceURL, {
         onPr: (p) => !cancelled && (setPr(p), setLoaded(true)),
         onFiles: (f) => !cancelled && setFiles(f),
+        onBudgetReport: (b) => !cancelled && setBudget(b),
         onSummaryDelta: (d) => !cancelled && setSummary((s) => s + d),
         onRisksDone: (r) => {
           if (cancelled) return;
@@ -132,6 +135,7 @@ function ReviewDetailPageContent({ id }: { id: string }) {
             setRisks,
             setSuggestions,
             setFiles,
+            setBudget,
             setSummaryDone,
             setRisksDone,
             setSuggestionsDone,
@@ -256,7 +260,9 @@ function ReviewDetailPageContent({ id }: { id: string }) {
         agentOpen={agentOpen}
       />
       <div className="flex min-h-0 flex-1">
-        {!sidebarCollapsed && view !== "session" ? (
+        {sidebarCollapsed ? null : view === "session" ? (
+          <SessionList activeId={isStreaming ? undefined : id} />
+        ) : (
           <Sidebar
             pr={pr}
             files={files}
@@ -265,7 +271,7 @@ function ReviewDetailPageContent({ id }: { id: string }) {
             onPickFile={pickFile}
             onPickRisk={pickRisk}
           />
-        ) : null}
+        )}
         <main ref={scrollRef} className="min-w-0 flex-1 overflow-y-auto">
           <div className="mx-auto flex max-w-[1080px] flex-col gap-4 px-5 py-5">
             {info ? (
@@ -303,6 +309,7 @@ function ReviewDetailPageContent({ id }: { id: string }) {
                 risks={risks}
                 suggestions={suggestions}
                 summary={summary}
+                budget={budget}
                 hasFiles={files.length > 0}
                 risksDone={risksDone}
                 suggestionsDone={suggestionsDone}
@@ -326,6 +333,7 @@ interface HydrateSetters {
   setRisks: (r: Risk[]) => void;
   setSuggestions: (s: Suggestion[]) => void;
   setFiles: (f: File[]) => void;
+  setBudget: (b: BudgetReport | null) => void;
   setSummaryDone: (b: boolean) => void;
   setRisksDone: (b: boolean) => void;
   setSuggestionsDone: (b: boolean) => void;
@@ -357,6 +365,7 @@ function hydrateFromDetail(d: ReviewDetail, h: HydrateSetters) {
   h.setRisks(d.risks ?? []);
   h.setSuggestions(d.suggestions ?? []);
   h.setFiles(d.files ?? []);
+  h.setBudget(d.budget_report ?? null);
   h.setSummaryDone(true);
   h.setRisksDone(true);
   h.setSuggestionsDone(true);

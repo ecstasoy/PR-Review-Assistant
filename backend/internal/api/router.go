@@ -29,4 +29,5 @@ func Register(r *gin.Engine, d Deps) {
 	g.POST("/review", PostReview(d))
 	g.GET("/reviews", ListReviews(d))
 	g.GET("/reviews/:id", GetReview(d))
+	g.POST("/review/:id/steer", PostSteer(d))
 }
