@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
 
 import type { File, Risk, Suggestion } from "@/lib/types";
@@ -15,16 +15,22 @@ interface Props {
   // 该文件命中的 risks（按 line 索引）+ suggestions（按 line 索引）
   riskByLine?: Map<number, Risk["severity"]>;
   suggestionsByLine?: Map<number, Suggestion[]>;
+  expanded?: boolean;
+  expandedNonce?: number;
 }
 
 // FileDiff 单文件 unified diff 卡，严格对齐 design 原型：
 // sticky 文件头（chevron + status + 路径 + adds/dels + 右侧 N 风险）+ hunks（@@ 缩进对齐代码列）
 // + 4 列 grid 代码行 + 命中风险的左侧 3px severity 色条 + 锚定行内建议气泡
-export function FileDiff({ file, riskByLine, suggestionsByLine }: Props) {
+export function FileDiff({ file, riskByLine, suggestionsByLine, expanded, expandedNonce }: Props) {
   const [collapsed, setCollapsed] = useState(false);
   const hunks = parsePatch(file.patch);
   const riskCount = riskByLine?.size ?? 0;
   const lang = langFromPath(file.path);
+
+  useEffect(() => {
+    if (expanded) setCollapsed(false);
+  }, [expanded, expandedNonce]);
 
   return (
     <article

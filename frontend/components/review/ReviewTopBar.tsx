@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import {
   AlignLeft,
   ExternalLink,
@@ -82,7 +82,7 @@ export function ReviewTopBar({
       <ViewSwitch view={view} />
 
       {view !== "session" ? (
-        <div className="flex items-center gap-3.5 px-1.5 pl-3">
+        <div className="flex items-center gap-3.5 pr-1.5 pl-3">
           <StageChip label="总结" state={stageStates.summary} />
           <StageChip label="风险" state={stageStates.risks} />
           <StageChip label="建议" state={stageStates.suggestions} />
@@ -120,6 +120,7 @@ export function ReviewTopBar({
 // 用 Next.js Link href=?view=... 持久化到 URL，scroll={false} 防滚动跳。
 function ViewSwitch({ view }: { view: ViewKey }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const items: Array<{ key: ViewKey; label: string; icon: typeof AlignLeft }> = [
     { key: "report", label: "报告", icon: AlignLeft },
     { key: "diff", label: "Diff", icon: FileCode2 },
@@ -129,10 +130,12 @@ function ViewSwitch({ view }: { view: ViewKey }) {
     <div className="flex gap-[3px] rounded-md border border-border bg-surface-2 p-[3px]">
       {items.map(({ key, label, icon: Icon }) => {
         const active = key === view;
+        const params = new URLSearchParams(searchParams.toString());
+        params.set("view", key);
         return (
           <Link
             key={key}
-            href={`${pathname}?view=${key}`}
+            href={`${pathname}?${params.toString()}`}
             scroll={false}
             className={cn(
               "inline-flex items-center gap-1.5 rounded-sm px-2.5 py-1 text-xs font-medium transition-colors",

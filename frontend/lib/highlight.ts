@@ -169,7 +169,6 @@ export function langFromPath(path: string): string {
       return "latex";
     case "vue":
       return "xml";
-    case "tsx_unused":
     default:
       return "";
   }

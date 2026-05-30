@@ -7,6 +7,8 @@ interface Props {
   files: File[];
   risks?: Risk[];
   suggestions?: Suggestion[];
+  expandedFilePath?: string;
+  expandedFileNonce?: number;
   // 流式生成行内建议未完时，header 右侧显示 spinner（v1 默认 false）
   streamingSuggestions?: boolean;
 }
@@ -14,7 +16,13 @@ interface Props {
 // DiffView Diff 视图入口：汇总头 + 按文件渲染 FileDiff 卡。
 // 把 risks/suggestions 按 (file, line) 聚合后传给每个 FileDiff。
 // 严格对齐 design 原型 ReviewResult.jsx 的 diff view 区。
-export function DiffView({ files, risks, suggestions }: Props) {
+export function DiffView({
+  files,
+  risks,
+  suggestions,
+  expandedFilePath,
+  expandedFileNonce,
+}: Props) {
   if (files.length === 0) {
     return (
       <section className="rounded-lg border border-border bg-surface p-6 text-center text-sm text-muted">
@@ -72,6 +80,8 @@ export function DiffView({ files, risks, suggestions }: Props) {
           file={f}
           riskByLine={riskByFile.get(f.path)}
           suggestionsByLine={sugByFile.get(f.path)}
+          expanded={expandedFilePath === f.path}
+          expandedNonce={expandedFilePath === f.path ? expandedFileNonce : undefined}
         />
       ))}
     </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, use, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
@@ -27,6 +27,14 @@ const VALID_VIEWS: ViewKey[] = ["report", "diff", "session"];
 // 跨视图跳转：点 Sidebar 文件 / 风险 → 切到 Diff 视图 + scrollTop 定位锚点行。
 export default function ReviewDetailPage({ params }: PageProps) {
   const { id } = use(params);
+  return (
+    <Suspense fallback={<LoadingState />}>
+      <ReviewDetailPageContent id={id} />
+    </Suspense>
+  );
+}
+
+function ReviewDetailPageContent({ id }: { id: string }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -39,6 +47,7 @@ export default function ReviewDetailPage({ params }: PageProps) {
   const [agentOpen, setAgentOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeFile, setActiveFile] = useState<string | undefined>(undefined);
+  const [expandRequest, setExpandRequest] = useState<{ path: string; nonce: number } | null>(null);
 
   const scrollRef = useRef<HTMLElement>(null);
   // 切到 Diff 视图前记下要滚的锚；视图挂载后 useEffect 消费
@@ -63,7 +72,7 @@ export default function ReviewDetailPage({ params }: PageProps) {
   const scrollToAnchor = useCallback((anchorId: string) => {
     const cont = scrollRef.current;
     const el = document.getElementById(anchorId);
-    if (!cont || !el) return;
+    if (!cont || !el) return false;
     const top =
       el.getBoundingClientRect().top - cont.getBoundingClientRect().top + cont.scrollTop - 90;
     cont.scrollTop = Math.max(0, top);
@@ -73,41 +82,53 @@ export default function ReviewDetailPage({ params }: PageProps) {
     window.setTimeout(() => {
       el.style.background = prevBg;
     }, 1100);
+    return true;
   }, []);
 
   // 视图切到 Diff 时，flush 之前积压的滚动请求
   useEffect(() => {
     if (view !== "diff" || !pendingScroll.current) return;
-    const id = pendingScroll.current;
-    pendingScroll.current = null;
+    const anchorId = pendingScroll.current;
+    let cancelled = false;
+    let attempts = 0;
+
+    const flush = () => {
+      if (cancelled) return;
+      if (scrollToAnchor(anchorId)) {
+        pendingScroll.current = null;
+        return;
+      }
+      attempts += 1;
+      if (attempts < 8) requestAnimationFrame(flush);
+    };
+
     // 等 DOM mount 完成
-    requestAnimationFrame(() => scrollToAnchor(id));
-  }, [view, scrollToAnchor]);
+    requestAnimationFrame(flush);
+    return () => {
+      cancelled = true;
+    };
+  }, [expandRequest?.nonce, view, scrollToAnchor]);
 
   function gotoView(next: ViewKey) {
-    router.replace(`${pathname}?view=${next}`, { scroll: false });
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("view", next);
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }
+
+  function queueDiffJump(path: string, anchor: string) {
+    setActiveFile(path);
+    setExpandRequest((prev) => ({ path, nonce: (prev?.nonce ?? 0) + 1 }));
+    pendingScroll.current = anchor;
+    if (view !== "diff") gotoView("diff");
   }
 
   function pickFile(path: string) {
-    setActiveFile(path);
-    const anchor = `file-${path}`;
-    if (view !== "diff") {
-      pendingScroll.current = anchor;
-      gotoView("diff");
-      return;
-    }
-    scrollToAnchor(anchor);
+    queueDiffJump(path, `file-${path}`);
   }
 
   function pickRisk(r: Risk) {
     if (r.line == null) return;
-    const anchor = `L-${r.file}-${r.line}`;
-    if (view !== "diff") {
-      pendingScroll.current = anchor;
-      gotoView("diff");
-      return;
-    }
-    scrollToAnchor(anchor);
+    queueDiffJump(r.file, `L-${r.file}-${r.line}`);
   }
 
   if (error) {
@@ -121,11 +142,7 @@ export default function ReviewDetailPage({ params }: PageProps) {
     );
   }
   if (!detail) {
-    return (
-      <p className="flex items-center gap-2 px-6 py-8 text-sm text-muted">
-        <Spinner size="xs" /> 加载中…
-      </p>
-    );
+    return <LoadingState />;
   }
 
   const pr: PrMeta = {
@@ -183,6 +200,8 @@ export default function ReviewDetailPage({ params }: PageProps) {
                 files={files}
                 risks={risks}
                 suggestions={detail.suggestions}
+                expandedFilePath={expandRequest?.path}
+                expandedFileNonce={expandRequest?.nonce}
               />
             ) : (
               <SessionStub />
@@ -192,6 +211,14 @@ export default function ReviewDetailPage({ params }: PageProps) {
         {agentOpen ? <AgentPanel onClose={() => setAgentOpen(false)} /> : null}
       </div>
     </div>
+  );
+}
+
+function LoadingState() {
+  return (
+    <p className="flex items-center gap-2 px-6 py-8 text-sm text-muted">
+      <Spinner size="xs" /> 加载中…
+    </p>
   );
 }
 
