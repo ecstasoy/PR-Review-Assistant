@@ -1,41 +1,82 @@
 package observability
 
 import (
-	"context"
 	"errors"
 	"testing"
 )
 
 func TestInitSentry_NoDSNReturnsNoopCleanup(t *testing.T) {
-	cleanup, err := InitSentry(SentryConfig{DSN: ""})
+	cleanup, err := InitSentry(SentryConfig{})
 	if err != nil {
-		t.Errorf("unexpected init err with empty DSN: %v", err)
+		t.Fatalf("expected no error, got %v", err)
 	}
 	if cleanup == nil {
-		t.Fatalf("cleanup should not be nil even when DSN empty")
+		t.Fatal("expected non-nil cleanup")
 	}
-	// noop 调用安全
 	cleanup()
 }
 
 func TestInitSentry_InvalidDSN(t *testing.T) {
-	// 非法 DSN 应返 err，但 cleanup 仍非 nil（noop）
-	cleanup, err := InitSentry(SentryConfig{DSN: "not-a-url"})
+	cleanup, err := InitSentry(SentryConfig{DSN: "://bad-dsn"})
 	if err == nil {
-		t.Errorf("expected init err with bad DSN")
+		t.Fatal("expected error for invalid DSN")
 	}
 	if cleanup == nil {
-		t.Fatalf("cleanup should still be non-nil on init error")
+		t.Fatal("expected non-nil cleanup on error")
 	}
 	cleanup()
 }
 
 func TestCaptureError_NilSafe(t *testing.T) {
-	// nil error 应该是 noop，不 panic
-	CaptureError(context.Background(), nil)
+	hub := CurrentHub()
+	CaptureError(hub, nil)
 }
 
 func TestCaptureError_RealError(t *testing.T) {
-	// Sentry 没初始化时 CaptureException 走全局 noop hub，不 panic
-	CaptureError(context.Background(), errors.New("test error"))
+	hub := CurrentHub()
+	CaptureError(hub, errors.New("boom"))
+}
+
+func TestRecover_Repanics(t *testing.T) {
+	hub := CurrentHub()
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic to be rethrown")
+		}
+	}()
+
+	func() {
+		defer Recover(hub)
+		panic("boom")
+	}()
+}
+
+func TestRecover_NoPanic(t *testing.T) {
+	hub := CurrentHub()
+	func() {
+		defer Recover(hub)
+	}()
+}
+
+func TestRecover_NilHubRepanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic to be rethrown")
+		}
+	}()
+
+	func() {
+		defer Recover(nil)
+		panic("boom")
+	}()
+}
+
+func TestCurrentHub_NonNil(t *testing.T) {
+	if CurrentHub() == nil {
+		t.Fatal("expected non-nil hub")
+	}
+}
+
+func TestCaptureError_NilHubSafe(t *testing.T) {
+	CaptureError(nil, errors.New("boom"))
 }

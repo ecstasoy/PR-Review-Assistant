@@ -1,135 +1,90 @@
-// 后端 HTTP 服务入口：装配 slog → 加载 .env → 读配置 → 构造依赖 → Gin → 注册路由。
 package main
 
 import (
-	"fmt"
+	"context"
 	"log/slog"
 	"os"
-	"path/filepath"
-	"strings"
 
-	"github.com/gin-gonic/gin"
-	sentrygin "github.com/getsentry/sentry-go/gin"
-	"github.com/joho/godotenv"
-
-	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/api"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/config"
-	gh "github.com/ecstasoy/PR-Review-Assistant/backend/internal/github"
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/db"
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/githubclient"
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/handlers"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/llm"
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/models"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/observability"
-	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/prctx"
-	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/store"
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/openai"
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/server"
+	sentrygin "github.com/getsentry/sentry-go/gin"
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func main() {
-	// 全局 JSON 结构化日志
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	logger.Info("starting backend")
 
-	// 尝试加载 .env（相对于当前工作目录）；生产环境一般无 .env：文件不存在时忽略，其它错误给出告警
-	for _, p := range []string{".env", "backend/.env"} {
-		if err := godotenv.Load(p); err == nil {
-			slog.Info("loaded env file", "path", p)
-			break
-		} else if !os.IsNotExist(err) {
-			slog.Warn("failed to load env file", "path", p, "err", err)
-		}
+	cfg, err := config.Load()
+	if err != nil {
+		logger.Error("failed to load config", "error", err)
 	}
 
-	cfg := config.MustLoad()
+	gormDB, err := db.Connect(cfg.DatabaseURL)
+	if err != nil {
+		logger.Error("failed to connect database", "error", err)
+	}
 
-	// Sentry：DSN 非空时初始化；空时 cleanup 是 noop
-	sentryCleanup, _ := observability.InitSentry(observability.SentryConfig{
+	r := gin.Default()
+	if cleanup, err := observability.InitSentry(observability.SentryConfig{
 		DSN:         cfg.SentryDSN,
 		Environment: cfg.Environment,
-	})
-	defer sentryCleanup()
-
-	deps := buildDeps(cfg)
-
-	r := gin.New()
-	r.Use(gin.Recovery())
-	r.Use(gin.Logger())
-	// Sentry middleware：当 DSN 配置后自动捕 panic + 注入 hub 到 ctx
-	// DSN 空时 sentry.Init 没调用，本 middleware 等价 noop
-	if cfg.SentryDSN != "" {
-		r.Use(sentrygin.New(sentrygin.Options{Repanic: true}))
-	}
-
-	// 配置受信代理：用于 c.ClientIP() 正确解析 X-Forwarded-For。
-	// 未配置时显式禁用代理信任，退回 RemoteAddr 解析。
-	if cfg.TrustedProxies == "" {
-		if err := r.SetTrustedProxies(nil); err != nil {
-			slog.Warn("set trusted proxies failed", "err", err)
-		}
+	}); err != nil {
+		logger.Error("failed to initialize sentry", "error", err)
 	} else {
-		raw := strings.Split(cfg.TrustedProxies, ",")
-		proxies := make([]string, 0, len(raw))
-		for _, p := range raw {
-			if p = strings.TrimSpace(p); p != "" {
-				proxies = append(proxies, p)
-			}
-		}
-		if err := r.SetTrustedProxies(proxies); err != nil {
-			slog.Warn("set trusted proxies failed", "err", err)
+		defer cleanup()
+		if cfg.SentryDSN != "" {
+			r.Use(sentrygin.New(sentrygin.Options{Repanic: true}))
 		}
 	}
 
-	api.Register(r, deps)
+	r.MaxMultipartMemory = 8 << 20 // 8 MiB
 
-	addr := fmt.Sprintf(":%d", cfg.Port)
-	slog.Info("server starting", "addr", addr)
-	if err := r.Run(addr); err != nil {
-		slog.Error("server exited", "err", err)
+	gh := githubclient.New(cfg.GitHubToken)
+
+	openaiClient := openai.New(cfg.OpenAIAPIKey, cfg.OpenAIBaseURL)
+	modelName := cfg.OpenAIModel
+	if modelName == "" {
+		modelName = "gpt-4.1-mini"
+	}
+	llmProvider := llm.NewOpenAIProvider(openaiClient, modelName)
+	if cfg.LLMProvider == "mock" {
+		llmProvider = llm.NewMockProvider()
+	}
+
+	repo := models.NewRepository(gormDB)
+	h := handlers.NewHandler(repo, gh, llmProvider, logger)
+	srv := server.New(h)
+	r.GET("/healthz", func(c *gin.Context) {
+		c.JSON(200, gin.H{"ok": true})
+	})
+	r.GET("/sse-test", func(c *gin.Context) {
+		c.Writer.Header().Set("Content-Type", "text/event-stream")
+		c.Writer.Header().Set("Cache-Control", "no-cache")
+		c.Writer.Header().Set("Connection", "keep-alive")
+		for i := 0; i < 5; i++ {
+			c.Writer.WriteString("data: ping\n\n")
+			c.Writer.Flush()
+		}
+	})
+	r.POST("/api/reviews", func(c *gin.Context) { srv.PostReview(c.Request.Context(), c) })
+	serverAddr := ":8080"
+	if port := os.Getenv("PORT"); port != "" {
+		serverAddr = ":" + port
+	}
+	logger.Info("listening", "addr", serverAddr)
+	if err := r.Run(serverAddr); err != nil {
+		logger.Error("server exited", "error", err)
 		os.Exit(1)
 	}
-}
-
-// buildDeps 按配置选 Provider；明示用户意图与最终走向，缺 key 显式 warn 而非静默降级。
-// Store 打开失败仅 warn，handler 已 nil-safe；缓存 + 历史功能降级停用而非整个服务挂。
-func buildDeps(cfg config.Config) api.Deps {
-	provider := pickProvider(cfg)
-	deps := api.Deps{
-		Fetcher:  gh.NewRealFetcher(cfg.GithubToken),
-		Provider: provider,
-		Builder:  prctx.NewLayeredBuilder(),
-	}
-	// 确保 SQLite 文件的父目录存在；sqlite3 自己不会建目录
-	if cfg.SQLitePath != ":memory:" {
-		if dir := filepath.Dir(cfg.SQLitePath); dir != "" && dir != "." {
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				slog.Warn("ensure sqlite dir failed", "dir", dir, "err", err)
-			}
-		}
-	}
-	if s, err := store.NewSQLiteStore(cfg.SQLitePath); err != nil {
-		slog.Warn("open sqlite store failed; cache + history disabled", "path", cfg.SQLitePath, "err", err)
-	} else {
-		slog.Info("store ready", "path", cfg.SQLitePath)
-		deps.Store = s
-	}
-	// Cache：用于 rate limit 计数（middleware）+ 未来 SSE session 状态。
-	// v3 当 cfg.RedisURL 非空时切到 RedisCache 跨实例共享；目前固定走 MemoryCache
-	deps.Cache = store.NewMemoryCache(0)
-	slog.Info("cache ready", "type", "memory")
-	return deps
-}
-
-func pickProvider(cfg config.Config) llm.Provider {
-	// LLM_PROVIDER 不区分大小写，容忍 "OpenAI" / "OPENAI" / "openai" 等写法
-	switch strings.ToLower(strings.TrimSpace(cfg.LLMProvider)) {
-	case "openai":
-		if cfg.OpenAIAPIKey == "" {
-			slog.Warn("LLM_PROVIDER=openai 但 OPENAI_API_KEY 未设，降级到 mock；请检查 .env 或 shell 环境变量")
-			slog.Info("llm provider", "type", "mock", "reason", "missing key")
-			return llm.NewMockProvider()
-		}
-		slog.Info("llm provider", "type", "openai", "base", cfg.OpenAIBaseURL, "model", cfg.LLMModel)
-		return llm.NewOpenAIProvider(cfg.OpenAIBaseURL, cfg.OpenAIAPIKey, cfg.LLMModel)
-	case "mock", "":
-		slog.Info("llm provider", "type", "mock")
-		return llm.NewMockProvider()
-	default:
-		slog.Warn("未知 LLM_PROVIDER 值，降级到 mock", "value", cfg.LLMProvider)
-		return llm.NewMockProvider()
-	}
+	// 测试时有些直接调用 main 后继续执行；显式阻塞直到 context 被取消可避免退出过快
+	<-context.Background().Done()
 }
