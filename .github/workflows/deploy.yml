@@ -1,0 +1,45 @@
+# 合 main 后自动部署后端到 Fly.io（前端 Vercel 走 Git integration 自动部）
+#
+# 触发：push 到 main 且改动落在 backend/ 或 fly.toml 上
+#       —— 纯文档 / 前端改动不触发，省 Fly machine build 时长
+#
+# 凭证：repo secrets 设 FLY_API_TOKEN（`flyctl tokens create deploy -x 90d`）
+# 失败处理：fail-fast；deploy 失败可 `flyctl releases rollback v<N>` 回滚
+
+name: Deploy backend to Fly.io
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch: # 允许手动触发；偶尔想强制 redeploy 用
+
+permissions:
+  contents: read
+
+concurrency:
+  # 同时只允许一个 deploy 跑；后到的 push 会等前一个完成（避免乱序部署）
+  group: deploy-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Fly.io deploy (lgtm-backend)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@fc53c09e1bc3be6f54706524e3b82c4f462f77be
+
+      - name: Deploy
+        working-directory: backend
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        # --remote-only：build 在 Fly builder 跑，不占 GitHub Actions 资源
+        # --strategy rolling：默认行为，machine 逐个替换；可改 immediate / canary
+        run: flyctl deploy --remote-only
