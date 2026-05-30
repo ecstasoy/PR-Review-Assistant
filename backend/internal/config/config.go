@@ -48,6 +48,15 @@ type Config struct {
 	// 用于 c.ClientIP() 正确解析 X-Forwarded-For。
 	// 空字符串（默认）表示不信任任何代理，直接取 RemoteAddr。
 	TrustedProxies string `env:"TRUSTED_PROXIES" envDefault:""`
+
+	// v3 RAG embedding provider：
+	//   - "mock" 默认 —— 确定性 hash 向量；CI / 无 key dev 跑通 pipeline
+	//   - "openai" —— 真 OpenAI 兼容 endpoint
+	// DeepSeek 没 embedding API；要用真值必须 OpenAI / 豆包 / Voyage
+	EmbeddingProvider string `env:"EMBEDDING_PROVIDER" envDefault:"mock"`
+	EmbeddingBaseURL  string `env:"EMBEDDING_BASE_URL" envDefault:"https://api.openai.com"`
+	EmbeddingAPIKey   string `env:"EMBEDDING_API_KEY"`
+	EmbeddingModel    string `env:"EMBEDDING_MODEL" envDefault:"text-embedding-3-small"`
 }
 
 // MustLoad 解析环境变量；失败则打印错误并退出进程。

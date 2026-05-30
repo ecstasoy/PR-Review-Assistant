@@ -15,6 +15,7 @@ import (
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/api"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/config"
 	gh "github.com/ecstasoy/PR-Review-Assistant/backend/internal/github"
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/index"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/llm"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/observability"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/prctx"
@@ -133,7 +134,28 @@ func buildDeps(cfg config.Config) api.Deps {
 		deps.Cache = store.NewMemoryCache(0)
 		slog.Info("cache ready", "type", "memory")
 	}
+	// Embedder：v3 RAG 用。缺 key / EMBEDDING_PROVIDER=mock 走 mock；openai 需 EMBEDDING_API_KEY
+	deps.Embedder = pickEmbedder(cfg)
 	return deps
+}
+
+func pickEmbedder(cfg config.Config) index.Embedder {
+	switch strings.ToLower(strings.TrimSpace(cfg.EmbeddingProvider)) {
+	case "openai":
+		if cfg.EmbeddingAPIKey == "" {
+			slog.Warn("EMBEDDING_PROVIDER=openai 但 EMBEDDING_API_KEY 未设；降级到 mock")
+			slog.Info("embedder ready", "type", "mock", "reason", "missing key")
+			return index.NewMockEmbedder()
+		}
+		slog.Info("embedder ready", "type", "openai", "base", cfg.EmbeddingBaseURL, "model", cfg.EmbeddingModel)
+		return index.NewOpenAIEmbedder(cfg.EmbeddingBaseURL, cfg.EmbeddingAPIKey, cfg.EmbeddingModel)
+	case "mock", "":
+		slog.Info("embedder ready", "type", "mock")
+		return index.NewMockEmbedder()
+	default:
+		slog.Warn("未知 EMBEDDING_PROVIDER 值，降级到 mock", "value", cfg.EmbeddingProvider)
+		return index.NewMockEmbedder()
+	}
 }
 
 // openSQLiteFallback 公用 SQLite 打开逻辑：确保父目录存在 + 打开 + warn 失败 → nil
