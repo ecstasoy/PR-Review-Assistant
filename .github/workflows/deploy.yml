@@ -16,6 +16,9 @@ on:
       - ".github/workflows/deploy.yml"
   workflow_dispatch: # 允许手动触发；偶尔想强制 redeploy 用
 
+permissions:
+  contents: read
+
 concurrency:
   # 同时只允许一个 deploy 跑；后到的 push 会等前一个完成（避免乱序部署）
   group: deploy-backend
