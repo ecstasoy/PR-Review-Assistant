@@ -23,9 +23,10 @@ const (
 
 // Check 单个 CI 检查项（GitHub Actions / 第三方 CI 暴露的 check-run）。
 type Check struct {
-	Name       string `json:"name"`        // 检查名（如 "build" / "test (race)" / "lint (golangci)"）
-	Status     string `json:"status"`      // passing / failing / pending（与 CI 同枚举）
-	DurationMS int    `json:"duration_ms"` // CompletedAt - StartedAt 毫秒；未完成时 0
+	Name       string `json:"name"`           // 检查名（如 "build" / "test (race)" / "lint (golangci)"）
+	Status     string `json:"status"`         // passing / failing / pending（与 CI 同枚举）
+	DurationMS int    `json:"duration_ms"`    // CompletedAt - StartedAt 毫秒；未完成时 0
+	Note       string `json:"note,omitempty"` // check-run output.summary，如覆盖率 "82.4% (-0.3%)"；前端 pending 状态优先显示
 }
 
 // Stats PR 体量统计（来自 GitHub API 的 pulls.Get 响应，无需额外请求）。
@@ -47,13 +48,14 @@ type PullRequest struct {
 	Body    string
 
 	// PR meta：用于落地页"最近评审"卡 / 评审顶栏 / 历史表格 / 会话视图分支 chip
-	Author    string    // GitHub login，可空（极少数情况）
-	State     string    // open / closed / merged
-	Labels    []string  // 标签名列表，按 API 返回顺序
-	BaseRef   string    // base 分支名（如 "main"）
-	HeadRef   string    // head 分支名（如 "fix/shard-eviction-race"）
-	CreatedAt time.Time // PR 创建时间，UTC
-	Stats     Stats
+	Author     string    // GitHub login，可空（极少数情况）
+	AuthorRole string    // GitHub author_association：OWNER / MEMBER / COLLABORATOR / CONTRIBUTOR / FIRST_TIMER / NONE 等；前端格式化
+	State      string    // open / closed / merged
+	Labels     []string  // 标签名列表，按 API 返回顺序
+	BaseRef    string    // base 分支名（如 "main"）
+	HeadRef    string    // head 分支名（如 "fix/shard-eviction-race"）
+	CreatedAt  time.Time // PR 创建时间，UTC
+	Stats      Stats
 
 	// CI 状态：HeadSHA 上所有 check-run 的汇总；checks 失败 / pending / 抓取失败均不阻塞主流程。
 	CI     string // passing / failing / pending

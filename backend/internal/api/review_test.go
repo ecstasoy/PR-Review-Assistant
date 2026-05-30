@@ -310,6 +310,7 @@ func samplePR() gh.PullRequest {
 func samplePRWithMeta() gh.PullRequest {
 	p := samplePR()
 	p.Author = "lin-mei"
+	p.AuthorRole = "CONTRIBUTOR"
 	p.State = gh.StateOpen
 	p.Labels = []string{"bug", "needs-review"}
 	p.BaseRef = "main"
@@ -318,7 +319,7 @@ func samplePRWithMeta() gh.PullRequest {
 	p.Stats = gh.Stats{Files: 5, Additions: 96, Deletions: 41, Commits: 4, Comments: 7}
 	p.CI = gh.CIStatusPassing
 	p.Checks = []gh.Check{
-		{Name: "build", Status: gh.CIStatusPassing, DurationMS: 24100},
+		{Name: "build", Status: gh.CIStatusPassing, DurationMS: 24100, Note: "82.4% (-0.3%)"},
 		{Name: "test", Status: gh.CIStatusPassing, DurationMS: 61300},
 	}
 	return p
@@ -548,6 +549,9 @@ func TestPostReview_PrEvent_IncludesMeta(t *testing.T) {
 	if meta["author"] != "lin-mei" {
 		t.Errorf("author=%v want lin-mei", meta["author"])
 	}
+	if meta["author_role"] != "CONTRIBUTOR" {
+		t.Errorf("author_role=%v want CONTRIBUTOR", meta["author_role"])
+	}
 	if meta["state"] != "open" {
 		t.Errorf("state=%v want open", meta["state"])
 	}
@@ -570,12 +574,19 @@ func TestPostReview_PrEvent_IncludesMeta(t *testing.T) {
 		t.Errorf("checks 应为 2，得到 %v", checks)
 	} else {
 		c0, _ := checks[0].(map[string]any)
-		if c0["name"] != "build" || c0["status"] != "passing" || c0["duration_ms"] != float64(24100) {
+		if c0["name"] != "build" || c0["status"] != "passing" || c0["duration_ms"] != float64(24100) || c0["note"] != "82.4% (-0.3%)" {
 			t.Errorf("checks[0]=%v", c0)
 		}
 	}
 	if _, ok := meta["pr_created_at"]; !ok {
 		t.Error("缺 pr_created_at")
+	}
+}
+
+func TestPrMetaPayload_OmitsEmptyAuthorRole(t *testing.T) {
+	meta := prMetaPayload(samplePR(), "https://github.com/golang/go/pull/42")
+	if _, ok := meta["author_role"]; ok {
+		t.Fatalf("author_role should be omitted when empty, got %v", meta["author_role"])
 	}
 }
 

@@ -26,6 +26,7 @@ func fetchChecks(ctx context.Context, client *gh.Client, owner, repo, ref string
 		c := Check{
 			Name:   r.GetName(),
 			Status: mapCheckStatus(r),
+			Note:   r.GetOutput().GetSummary(), // 自定义文本，例如覆盖率 "82.4% (-0.3%)"；多数 check 为空
 		}
 		// duration = completed_at - started_at（毫秒）；未完成 / 缺时间戳时为 0
 		started := r.GetStartedAt()

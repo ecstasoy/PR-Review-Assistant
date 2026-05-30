@@ -151,6 +151,7 @@ func seedFullReview(t *testing.T, s store.Store, risksJSON string) string {
 	payload, _ := json.Marshal(cachedPayload{
 		Title:       "fix race",
 		Author:      "lin-mei",
+		AuthorRole:  "CONTRIBUTOR",
 		State:       gh.StateOpen,
 		Labels:      []string{"bug", "concurrency"},
 		BaseRef:     "main",
@@ -159,7 +160,7 @@ func seedFullReview(t *testing.T, s store.Store, risksJSON string) string {
 		Stats:       gh.Stats{Files: 5, Additions: 96, Deletions: 41, Commits: 4, Comments: 7},
 		CI:          gh.CIStatusPassing,
 		Checks: []gh.Check{
-			{Name: "build", Status: gh.CIStatusPassing, DurationMS: 24100},
+			{Name: "build", Status: gh.CIStatusPassing, DurationMS: 24100, Note: "82.4% (-0.3%)"},
 		},
 		Summary:     "summary text",
 		Risks:       json.RawMessage(risksJSON),
@@ -223,7 +224,7 @@ func TestGetReview_IncludesFullMeta(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &d); err != nil {
 		t.Fatalf("decode: %v body=%s", err, body)
 	}
-	if d["author"] != "lin-mei" || d["state"] != "open" || d["ci"] != "passing" {
+	if d["author"] != "lin-mei" || d["author_role"] != "CONTRIBUTOR" || d["state"] != "open" || d["ci"] != "passing" {
 		t.Errorf("meta 字段缺失: %v", d)
 	}
 	if d["base_ref"] != "main" || d["head_ref"] != "fix/race" {
@@ -237,6 +238,11 @@ func TestGetReview_IncludesFullMeta(t *testing.T) {
 	}
 	if checks, _ := d["checks"].([]any); len(checks) != 1 {
 		t.Errorf("checks=%v", d["checks"])
+	} else {
+		c0, _ := checks[0].(map[string]any)
+		if c0["note"] != "82.4% (-0.3%)" {
+			t.Errorf("checks[0].note=%v", c0["note"])
+		}
 	}
 	if d["pr_created_at"] == nil {
 		t.Error("缺 pr_created_at")
