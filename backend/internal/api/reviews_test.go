@@ -152,6 +152,7 @@ func seedFullReview(t *testing.T, s store.Store, risksJSON string) string {
 		Title:       "fix race",
 		Author:      "lin-mei",
 		AuthorRole:  "CONTRIBUTOR",
+		Lang:        "Go",
 		State:       gh.StateOpen,
 		Labels:      []string{"bug", "concurrency"},
 		BaseRef:     "main",
@@ -327,6 +328,38 @@ func TestListReviews_ExcludesFiles(t *testing.T) {
 	}
 	if _, hasFiles := list[0]["files"]; hasFiles {
 		t.Error("list 端不应包含 files 字段（detail 才有）")
+	}
+}
+
+func TestListReviews_IncludesLang(t *testing.T) {
+	s := newTestStore(t)
+	seedFullReview(t, s, `[]`)
+
+	srv := startTestServer(t, Deps{Provider: llm.NewMockProvider(), Store: s})
+	res, body := getJSON(t, srv, "/api/reviews")
+	if res.StatusCode != 200 {
+		t.Fatalf("status=%d body=%s", res.StatusCode, body)
+	}
+	var list []map[string]any
+	_ = json.Unmarshal([]byte(body), &list)
+	if len(list) != 1 || list[0]["lang"] != "Go" {
+		t.Errorf("lang 应从 payload 解出为 Go，得到 %v", list[0]["lang"])
+	}
+}
+
+func TestGetReview_IncludesLang(t *testing.T) {
+	s := newTestStore(t)
+	id := seedFullReview(t, s, `[]`)
+
+	srv := startTestServer(t, Deps{Provider: llm.NewMockProvider(), Store: s})
+	res, body := getJSON(t, srv, "/api/reviews/"+id)
+	if res.StatusCode != 200 {
+		t.Fatalf("status=%d body=%s", res.StatusCode, body)
+	}
+	var d map[string]any
+	_ = json.Unmarshal([]byte(body), &d)
+	if d["lang"] != "Go" {
+		t.Errorf("detail.lang 应为 Go，得到 %v", d["lang"])
 	}
 }
 
