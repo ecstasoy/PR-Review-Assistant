@@ -3,6 +3,8 @@
 import { Suspense, use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { getReview } from "@/lib/api";
 import { streamReview } from "@/lib/sse";
@@ -285,11 +287,7 @@ function ReviewDetailPageContent({ id }: { id: string }) {
         )}
         <main ref={scrollRef} className="min-w-0 flex-1 overflow-y-auto">
           <div className="mx-auto flex max-w-[1080px] flex-col gap-4 px-5 py-5">
-            {info ? (
-              <div className="rounded-md border border-border bg-surface-2 px-4 py-3 text-sm text-text-2">
-                {info}
-              </div>
-            ) : null}
+            {info ? <InfoBanner info={info} /> : null}
             {stageErrors.context ? (
               <StageErrorBanner stage="上下文" message={stageErrors.context} />
             ) : null}
@@ -432,6 +430,34 @@ function StageErrorBanner({ stage, message }: { stage: string; message: string }
     <div className="rounded-md border border-high-bd bg-high-bg px-3 py-2 text-sm text-high">
       <span className="font-medium">{stage}失败：</span>
       {message}
+    </div>
+  );
+}
+
+// agentReplyPrefix 匹配后端 SSE info 帧的 Agent 完成模板
+// 命中即按 markdown 渲染 body（追问场景 LLM 输出含 ## / ``` / * 等格式）
+const agentReplyPrefix = /^Agent 完成（\d+ 步）：(.*)$/s;
+
+// infoProse Agent 回复 markdown 排版：与正文 text-sm 对齐；比 SummaryCard 更紧凑
+const infoProse =
+  "[&_p]:my-1.5 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_ul]:my-1.5 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-1.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-0.5 [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h1]:text-base [&_h1]:font-semibold [&_h2]:mt-3 [&_h2]:mb-1.5 [&_h2]:text-sm [&_h2]:font-semibold [&_h3]:mt-2 [&_h3]:mb-1 [&_h3]:text-[13px] [&_h3]:font-semibold [&_code]:rounded [&_code]:bg-surface [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[12px] [&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-surface [&_pre]:p-2 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_strong]:font-semibold [&_strong]:text-text";
+
+function InfoBanner({ info }: { info: string }) {
+  const m = info.match(agentReplyPrefix);
+  if (!m) {
+    return (
+      <div className="rounded-md border border-border bg-surface-2 px-4 py-3 text-sm text-text-2">
+        {info}
+      </div>
+    );
+  }
+  const body = m[1].trim();
+  return (
+    <div className="rounded-md border border-border bg-surface-2 px-4 py-3 text-sm text-text-2">
+      <div className="mb-2 text-xs text-muted">Agent 回复</div>
+      <div className={infoProse}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{body}</ReactMarkdown>
+      </div>
     </div>
   );
 }

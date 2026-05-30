@@ -599,7 +599,7 @@ function FetchDetail({ files, pr }: { files: File[]; pr: PrMeta }) {
 }
 
 interface BudgetItem {
-  layer: "L1" | "L2" | "L3";
+  layer: "L1" | "L2" | "L3" | "L4";
   label: string;
   tok: number;
   className: string;
@@ -616,18 +616,24 @@ const BUDGET_LABELS = {
   L1: "diff hunk + PR meta",
   L2: "变更文件 / 受影响函数",
   L3: "项目约定（README/CLAUDE.md）",
+  L4: "RAG 召回（跨文件相关代码）",
 } as const;
 
 // fromBudgetReport 后端真值（budget_report SSE 帧 / cached detail）→ 渲染形状
+// L4 只在 used_l4 > 0 时显示，避免没开 RAG 的旧 review 多出空条
 function fromBudgetReport(b: BudgetReport): BudgetView {
   const items: BudgetItem[] = [
     { layer: "L1", label: BUDGET_LABELS.L1, tok: b.used_l1, className: "bg-info" },
     { layer: "L2", label: BUDGET_LABELS.L2, tok: b.used_l2, className: "bg-ok" },
     { layer: "L3", label: BUDGET_LABELS.L3, tok: b.used_l3, className: "bg-med" },
   ];
+  const l4 = b.used_l4 ?? 0;
+  if (l4 > 0) {
+    items.push({ layer: "L4", label: BUDGET_LABELS.L4, tok: l4, className: "bg-l4" });
+  }
   return {
     items,
-    total: Math.max(1, b.used_l1 + b.used_l2 + b.used_l3),
+    total: Math.max(1, b.used_l1 + b.used_l2 + b.used_l3 + l4),
     dropped: b.dropped ?? [],
     estimated: false,
   };
@@ -654,11 +660,13 @@ function estimateBudget(_pr: PrMeta, files: File[]): BudgetView {
 }
 
 function ContextDetail({ budget }: { budget: BudgetView }) {
+  const hasL4 = budget.items.some((b) => b.layer === "L4");
+  const ratio = hasL4 ? "L1:L2:L3:L4 ≈ 3:4:1:2" : "L1:L2:L3 ≈ 4:5:1";
   return (
     <ToolCard
       label={
         <>
-          token 预算 · L1:L2:L3 ≈ 4:5:1 · 合计 {(budget.total / 1000).toFixed(1)}K
+          token 预算 · {ratio} · 合计 {(budget.total / 1000).toFixed(1)}K
           {budget.estimated ? <span className="text-faint"> · 粗估</span> : null}
         </>
       }

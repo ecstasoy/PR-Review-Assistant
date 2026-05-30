@@ -99,6 +99,9 @@
   --fail: #b42318;
   --pending: #b54708;
   --info: #2a6fdb;
+
+  /* L4 RAG 召回层；和 L1(info)/L2(ok)/L3(med) 区分开 */
+  --l4: #7c3aed;
 }
 
 /* ---------- DARK ---------- */
@@ -149,6 +152,9 @@
   --fail: #ff6b5e;
   --pending: #f5b544;
   --info: #4a8df0;
+
+  /* L4 RAG dark 下亮一点；保证暗 bg 上可见 */
+  --l4: #a78bfa;
 
   /* dark 下重设 accent（单调白） */
   --accent: #f4f4f5;
@@ -223,6 +229,9 @@
   --color-fail: var(--fail);
   --color-pending: var(--pending);
   --color-info: var(--info);
+
+  /* L4 RAG */
+  --color-l4: var(--l4);
 
   /* diff */
   --color-add-bg: var(--add-bg);
