@@ -92,6 +92,10 @@ func buildDeps(cfg config.Config) api.Deps {
 		slog.Info("store ready", "path", cfg.SQLitePath)
 		deps.Store = s
 	}
+	// Cache：用于 rate limit 计数（middleware）+ 未来 SSE session 状态。
+	// v3 当 cfg.RedisURL 非空时切到 RedisCache 跨实例共享；目前固定走 MemoryCache
+	deps.Cache = store.NewMemoryCache(0)
+	slog.Info("cache ready", "type", "memory")
 	return deps
 }
 
