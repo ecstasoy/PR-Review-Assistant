@@ -33,4 +33,6 @@ func Register(r *gin.Engine, d Deps) {
 	g.GET("/reviews", ListReviews(d))
 	g.GET("/reviews/:id", GetReview(d))
 	g.POST("/review/:id/steer", PostSteer(d))
+	expensive := middleware.RateLimit(middleware.ExpensiveDefault)
+	read := middleware.RateLimit(middleware.ReadDefault)
 }
