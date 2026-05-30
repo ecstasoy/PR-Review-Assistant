@@ -59,9 +59,14 @@ func TestRedisCache_Miss(t *testing.T) {
 func TestRedisCache_TTLExpires(t *testing.T) {
 	c := redisTestCache(t)
 	ctx := context.Background()
-	_ = c.Set(ctx, "ephemeral", []byte("x"), 50*time.Millisecond)
+	if err := c.Set(ctx, "ephemeral", []byte("x"), 50*time.Millisecond); err != nil {
+		t.Fatalf("set: %v", err)
+	}
 	time.Sleep(100 * time.Millisecond)
-	_, ok, _ := c.Get(ctx, "ephemeral")
+	_, ok, err := c.Get(ctx, "ephemeral")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
 	if ok {
 		t.Errorf("ttl expired entry should be invisible")
 	}
