@@ -1,4 +1,4 @@
-import type { File, PrMeta, Risk, Suggestion } from "./types";
+import type { BudgetReport, File, PrMeta, Risk, Suggestion } from "./types";
 
 // 重导出方便老消费者继续 import 自此处；新代码请直接从 ./types 取
 export type { PrMeta } from "./types";
@@ -6,6 +6,7 @@ export type { PrMeta } from "./types";
 export interface StreamCallbacks {
   onPr?: (pr: PrMeta) => void;
   onFiles?: (files: File[]) => void;
+  onBudgetReport?: (budget: BudgetReport) => void;
   onSummaryDelta?: (delta: string) => void;
   onRisksDone?: (risks: Risk[]) => void;
   onSuggestionsDone?: (suggestions: Suggestion[]) => void;
@@ -92,6 +93,9 @@ function dispatch(ev: ParsedFrame, cb: StreamCallbacks): void {
       break;
     case "files":
       cb.onFiles?.(parsed as File[]);
+      break;
+    case "budget_report":
+      cb.onBudgetReport?.(parsed as BudgetReport);
       break;
     case "summary_delta": {
       const p = parsed as { delta?: string };
