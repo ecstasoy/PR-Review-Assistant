@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 
@@ -134,8 +135,19 @@ func main() {
 	for i := 0; i < len(chunks); i += batchSize {
 		end := min(i+batchSize, len(chunks))
 		batch := chunks[i:end]
-		if err := rt.UpsertMany(ctx, *scope, batch); err != nil {
-			slog.Warn("batch upsert failed; continuing next batch", "range", fmt.Sprintf("[%d:%d]", i, end), "err", err)
+		// retry 2 次：容器 boot 时跟 server 共享 rag.db，前几个 batch 可能撞 SQLite
+		// 初始化 race（CREATE TABLE / pragma migration）；重试覆盖瞬态错误
+		var err error
+		for attempt := 0; attempt < 3; attempt++ {
+			if err = rt.UpsertMany(ctx, *scope, batch); err == nil {
+				break
+			}
+			if attempt < 2 {
+				time.Sleep(time.Duration(100*(attempt+1)) * time.Millisecond)
+			}
+		}
+		if err != nil {
+			slog.Warn("batch upsert failed after retries; continuing next batch", "range", fmt.Sprintf("[%d:%d]", i, end), "err", err)
 			continue
 		}
 		indexed += len(batch)

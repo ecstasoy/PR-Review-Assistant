@@ -1,7 +1,8 @@
 # 合 main 后自动部署后端到 Fly.io（前端 Vercel 走 Git integration 自动部）
 #
-# 触发：push 到 main 且改动落在 backend/ 或 fly.toml 上
-#       —— 纯文档 / 前端改动不触发，省 Fly machine build 时长
+# 触发：push 到 main 且改动落在 backend / frontend / docs / dockerignore 上
+#       frontend/docs 也触发是因为容器内 indexrepo 启动时扫 /app/src 含这些
+#       想强制刷新 RAG 索引但代码没动 → workflow_dispatch 手动触发
 #
 # 凭证：repo secrets 设 FLY_API_TOKEN（`flyctl tokens create deploy -x 90d`）
 # 失败处理：fail-fast；deploy 失败可 `flyctl releases rollback v<N>` 回滚
@@ -13,8 +14,11 @@ on:
     branches: [main]
     paths:
       - "backend/**"
+      - "frontend/**"
+      - "docs/**"
+      - ".dockerignore"
       - ".github/workflows/deploy.yml"
-  workflow_dispatch: # 允许手动触发；偶尔想强制 redeploy 用
+  workflow_dispatch: # 允许手动触发；想强制 RAG re-warmup 用
 
 permissions:
   contents: read
@@ -37,9 +41,13 @@ jobs:
         uses: superfly/flyctl-actions/setup-flyctl@fc53c09e1bc3be6f54706524e3b82c4f462f77be
 
       - name: Deploy
-        working-directory: backend
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         # --remote-only：build 在 Fly builder 跑，不占 GitHub Actions 资源
+        # 构建上下文 = repo root（'.'），让 Dockerfile 能 COPY backend + frontend + docs 喂 indexrepo
         # --strategy rolling：默认行为，machine 逐个替换；可改 immediate / canary
-        run: flyctl deploy --remote-only
+        run: |
+          flyctl deploy --remote-only \
+            --config backend/fly.toml \
+            --dockerfile backend/Dockerfile \
+            .
