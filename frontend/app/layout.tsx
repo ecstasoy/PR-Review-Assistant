@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 
 import "./globals.css";
-import { NavBar } from "@/components/NavBar";
 import { ThemeScript } from "@/components/theme-script";
 
 // next/font 注入 CSS 变量；globals.css 的 --font-sans / --font-mono 引用这两个
@@ -21,20 +20,18 @@ export const metadata: Metadata = {
   description: "AI 辅助代码评审 — 粘贴 GitHub PR 链接即可。",
 };
 
+// 根布局只负责 html / body / 字体 / 主题脚本 / 全局 CSS。
+// 不挂 NavBar 也不限宽——/review/[id] 走 edge-to-edge 全宽 dashboard 风格，
+// landing / history 在 app/(main)/layout.tsx 里加 NavBar + 居中限宽。
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    // data-theme 由 ThemeScript 在水合前按 localStorage / prefers-color-scheme 写入，
-    // 这里给 light 兜底（SSR 输出 + 极端情况下脚本被禁）
     <html lang="zh-CN" data-theme="light" data-density="comfortable" suppressHydrationWarning>
       <head>
         <ThemeScript />
       </head>
-      <body className={`${geistSans.variable} ${geistMono.variable}`}>
-        <NavBar />
-        <main className="mx-auto max-w-5xl px-6 py-8">{children}</main>
-      </body>
+      <body className={`${geistSans.variable} ${geistMono.variable}`}>{children}</body>
     </html>
   );
 }

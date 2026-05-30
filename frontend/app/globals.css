@@ -307,6 +307,63 @@ input, textarea { font-family: inherit; }
   100% { background-position: 200% 0; }
 }
 
+/* ============================================================
+   highlight.js token → 设计 --tok-* 映射
+   per-line 高亮通过 hljs.highlight().value 输出带 hljs-* class 的 HTML
+   ============================================================ */
+
+.hljs { color: var(--text); background: transparent; }
+
+.hljs-keyword,
+.hljs-built_in,
+.hljs-type,
+.hljs-meta-keyword,
+.hljs-doctag,
+.hljs-selector-tag,
+.hljs-tag {
+  color: var(--tok-kw);
+  font-weight: 600;
+}
+
+.hljs-string,
+.hljs-template-string,
+.hljs-regexp,
+.hljs-meta-string {
+  color: var(--tok-str);
+}
+
+.hljs-number,
+.hljs-literal,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-attr,
+.hljs-selector-attr,
+.hljs-selector-pseudo {
+  color: var(--tok-num);
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: var(--tok-com);
+  font-style: italic;
+}
+
+.hljs-meta,
+.hljs-section,
+.hljs-title,
+.hljs-class .hljs-title,
+.hljs-name {
+  color: var(--text);
+}
+
+.hljs-link {
+  color: var(--info);
+  text-decoration: underline;
+}
+
+.hljs-deletion { color: var(--high); }
+.hljs-addition { color: var(--ok); }
+
 /* shimmer skeleton helper */
 .skeleton {
   background: linear-gradient(
