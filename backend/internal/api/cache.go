@@ -33,6 +33,8 @@ type cachedPayload struct {
 	Summary     string          `json:"summary"`
 	Risks       json.RawMessage `json:"risks"`
 	Suggestions json.RawMessage `json:"suggestions"`
+	// BudgetReport 分层上下文 token 预算实际分配（L1-L4）；指针 + omitempty 让旧缓存不带该字段时 JSON 干净
+	BudgetReport *budgetReportPayload `json:"budget_report,omitempty"`
 }
 
 // replayCached 把缓存内容按 SSE 协议依次写回；调用方负责事先已发首帧 pr meta。
@@ -40,6 +42,9 @@ type cachedPayload struct {
 // 不发 info / cached 标记事件：前端 info 语义是"短路隐藏 sections"，发了反而藏住缓存内容；
 // 用户体感"秒回"即缓存信号，UI badge 留后续 PR。
 func replayCached(w http.ResponseWriter, p cachedPayload) {
+	if p.BudgetReport != nil {
+		writeSSE(w, "budget_report", p.BudgetReport)
+	}
 	if p.Summary != "" {
 		// 单帧 delta 即可拼出完整 summary（前端 reducer 是 += 累加）
 		writeSSE(w, "summary_delta", map[string]string{"delta": p.Summary})
