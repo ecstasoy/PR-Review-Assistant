@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -31,7 +32,8 @@ func Readiness(d Deps) gin.HandlerFunc {
 
 		if d.Store != nil {
 			if err := d.Store.Ping(ctx); err != nil {
-				checks["store"] = "fail: " + err.Error()
+				slog.Error("store ping failed", "err", err)
+				checks["store"] = "fail"
 				allHealthy = false
 			} else {
 				checks["store"] = "ok"
