@@ -1,0 +1,40 @@
+# GitHub App Manifest — 给 v3 主线④ Webhook + OAuth 用
+#
+# 怎么用：访问 https://github.com/settings/apps/new?manifest=$(URL_ENCODE(this_file_contents))
+# 或者用「Create from manifest」流程（见 docs/GITHUB_APP.md）
+# GitHub 创建后会回调你设置的 redirect_url，里面带 code，可以一次性换取 App 凭证（ID / private_key / webhook_secret）
+#
+# 字段说明对应：https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest
+
+name: PR-Review-Assistant
+url: https://github.com/ecstasoy/PR-Review-Assistant
+
+# 用户装好 App 后，跳转的地址（v3 主线④ G2 OAuth login flow 用）
+# 替换成你部署后的真实地址
+redirect_url: https://prra.example.com/auth/github/callback
+
+# webhook 回调地址（v3 主线④ G3 webhook receiver 用）
+hook_attributes:
+  url: https://prra.example.com/api/webhook/github
+  active: true
+
+# webhook 事件订阅
+default_events:
+  - pull_request          # PR 开 / 同步 / 关 → 触发自动评审
+  - pull_request_review   # 自动评审写完 review comment 时收到回响（防自我循环）
+  - installation          # App 装 / 卸载（统计 + 清理）
+
+# 权限（最小集 —— 评审只需要读 + 写 comment）
+default_permissions:
+  contents: read              # 读 PR diff / 仓库文件
+  metadata: read              # 必须，最低权限
+  pull_requests: write        # 写 review comment（行内建议回灌）
+  checks: read                # 读 CI 状态（已经在 v1 用，PAT 路径也读）
+  issues: read                # 评论的"上下文 issue"（可选，留位）
+
+# App 可被任意账户 / 组织安装（公开 App）
+public: true
+
+# 设置页元信息
+setup_url: https://prra.example.com/setup
+setup_on_update: false
