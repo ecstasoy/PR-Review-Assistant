@@ -27,13 +27,14 @@ func Register(r *gin.Engine, d Deps) {
 
 	expensive := middleware.RateLimit(middleware.ExpensiveDefault)
 	read := middleware.RateLimit(middleware.ReadDefault)
-	
+
 	// /health 留为 liveness 别名（向后兼容 v1/v2 配置）
 	g.GET("/health", Health)
 	g.GET("/health/live", Health)
 	g.GET("/health/ready", Readiness(d))
-	g.POST("/review", PostReview(d))
-	g.GET("/reviews", ListReviews(d))
-	g.GET("/reviews/:id", GetReview(d))
-	g.POST("/review/:id/steer", PostSteer(d))
+
+	g.POST("/review", expensive, PostReview(d))
+	g.GET("/reviews", read, ListReviews(d))
+	g.GET("/reviews/:id", read, GetReview(d))
+	g.POST("/review/:id/steer", expensive, PostSteer(d))
 }
