@@ -168,9 +168,9 @@ func TestLayered_BudgetReport(t *testing.T) {
 // TestLayered_L4_ScoreThresholdDrops 验证 cosine < defaultRAGScoreThreshold 的召回不入 L4
 func TestLayered_L4_ScoreThresholdDrops(t *testing.T) {
 	b := NewLayeredBuilder(WithRetriever(stubRetriever{refs: []index.Reference{
-		{File: "other.go", Snippet: "good match", Score: 0.8, PRNumber: 76},
-		{File: "noise.go", Snippet: "bad match", Score: 0.3, PRNumber: 99},  // 应被阈值过滤
-		{File: "weak.go", Snippet: "weak match", Score: 0.45, PRNumber: 88}, // 应被阈值过滤
+		{File: "other.go", Snippet: "good match", Score: 0.8, PRNumber: 76}, // 高于阈值，保留
+		{File: "noise.go", Snippet: "bad match", Score: 0.1, PRNumber: 99}, // 远低于阈值，过滤
+		{File: "weak.go", Snippet: "weak match", Score: 0.2, PRNumber: 88}, // 同上
 	}}))
 	pr := newPR([]github.File{{Path: "a.go", Patch: "small"}})
 	ctx, err := b.Build(context.Background(), pr)
