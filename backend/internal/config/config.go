@@ -38,6 +38,10 @@ type Config struct {
 	GithubAppWebhookSec string `env:"GITHUB_APP_WEBHOOK_SECRET"` // webhook 签名校验
 	GithubOAuthClientID string `env:"GITHUB_OAUTH_CLIENT_ID"`
 	GithubOAuthSecret   string `env:"GITHUB_OAUTH_CLIENT_SECRET"`
+	// GithubOAuthRedirectURI 必须跟 GitHub App settings 里 Callback URL 完全一致
+	// 默认 https://lgtm-alpha.vercel.app/api/auth/github/callback（Vercel rewrite → fly.dev）
+	// 本地 dev 改 http://localhost:3000/api/auth/github/callback（Next dev proxy）
+	GithubOAuthRedirectURI string `env:"GITHUB_OAUTH_REDIRECT_URI" envDefault:"https://lgtm-alpha.vercel.app/api/auth/github/callback"`
 
 	// v3 可观测性：Sentry / OTLP；空 = 不启用
 	SentryDSN    string `env:"SENTRY_DSN"`
