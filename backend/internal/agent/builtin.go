@@ -64,11 +64,13 @@ func NewListDirTool(files []gh.File) Tool {
 			var a struct {
 				Prefix string `json:"prefix"`
 			}
-			_ = json.Unmarshal(raw, &a) // 空 args 也接受
+			if err := json.Unmarshal(raw, &a); err != nil {
+				return "", fmt.Errorf("list_dir: 参数解析失败: %w", err)
+			}
 			prefix := strings.TrimSpace(a.Prefix)
 			matched := make([]gh.File, 0, len(files))
 			for _, f := range files {
-				if prefix == "" || strings.HasPrefix(f.Path, prefix) || strings.HasPrefix(path.Clean(f.Path)+"/", prefix) {
+				if prefix == "" || strings.HasPrefix(path.Clean(f.Path), prefix) {
 					matched = append(matched, f)
 				}
 			}
@@ -92,7 +94,7 @@ func NewGrepTool(files []gh.File) Tool {
 	return &simpleTool{
 		spec: ToolSpec{
 			Name:        "grep_patches",
-			Description: "在 PR diff 内 grep 字符串或正则；返回 file:line: 命中行",
+			Description: "在 PR diff 内 grep 字符串或正则；返回 file:patch行号: 命中行（行号为 patch 内序号，非原文件行号）",
 			Parameters:  json.RawMessage(`{"type":"object","required":["pattern"],"properties":{"pattern":{"type":"string"},"regex":{"type":"boolean","description":"true 时按正则编译，否则字面匹配"},"max_matches":{"type":"integer","description":"最多返回多少条命中，默认 20"}}}`),
 		},
 		run: func(_ context.Context, raw json.RawMessage) (string, error) {
@@ -122,6 +124,7 @@ func NewGrepTool(files []gh.File) Tool {
 				matcher = func(s string) bool { return strings.Contains(s, p) }
 			}
 			var hits []string
+			truncated := false
 			for _, f := range files {
 				if f.Patch == "" {
 					continue
@@ -130,6 +133,7 @@ func NewGrepTool(files []gh.File) Tool {
 					if matcher(line) {
 						hits = append(hits, fmt.Sprintf("%s:%d: %s", f.Path, i+1, line))
 						if len(hits) >= a.MaxMatches {
+							truncated = true
 							goto done
 						}
 					}
@@ -140,7 +144,7 @@ func NewGrepTool(files []gh.File) Tool {
 				return fmt.Sprintf("（pattern=%q 在 %d 个 patch 中无命中）", a.Pattern, len(files)), nil
 			}
 			out := strings.Join(hits, "\n")
-			if len(hits) == a.MaxMatches {
+			if truncated {
 				out += fmt.Sprintf("\n（已截断到 max_matches=%d）", a.MaxMatches)
 			}
 			return out, nil
