@@ -59,6 +59,9 @@ interface Props {
   reviewId?: string;
   onSteeredRisks?: (risks: Risk[]) => void;
   onSteeredSuggestions?: (suggestions: Suggestion[]) => void;
+  onSteerToolCallStart?: (call: AgentToolCall) => void;
+  onSteerToolCallDone?: (call: AgentToolCall) => void;
+  onSteerInfo?: (message: string) => void;
   // Agent loop tool 调用事件（A3 后端 emit tool_call_start/done）
   // 按 id 已合并 start/done，状态从 running → done/error；从父级 state 流下来
   toolEvents?: ToolEvent[];
@@ -132,6 +135,9 @@ export function AgentSessionView({
   reviewId,
   onSteeredRisks,
   onSteeredSuggestions,
+  onSteerToolCallStart,
+  onSteerToolCallDone,
+  onSteerInfo,
   toolEvents,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -187,6 +193,9 @@ export function AgentSessionView({
               onSteeredSuggestions?.(s);
               if (mode === "stage" && stage === "suggestions") markDone(s.length);
             },
+            onToolCallStart: (call) => onSteerToolCallStart?.(call),
+            onToolCallDone: (call) => onSteerToolCallDone?.(call),
+            onInfo: (message) => onSteerInfo?.(message),
             onStageError: (_s, msg) => markError(msg),
           },
           undefined,
@@ -196,7 +205,11 @@ export function AgentSessionView({
         // agent 模式不期待 steered_* 帧，工具调用结果走 toolEvents 时间线
         setSteerHistory((prev) =>
           prev.map((e) =>
-            e.id === id && e.status === "running" ? { ...e, status: "done", resultCount: 0 } : e,
+            e.id === id && e.status === "running"
+              ? e.mode === "stage"
+                ? { ...e, status: "done", resultCount: 0 }
+                : { ...e, status: "done" }
+              : e,
           ),
         );
       } catch (e) {
@@ -206,7 +219,14 @@ export function AgentSessionView({
         setSteerInFlight(false);
       }
     },
-    [reviewId, onSteeredRisks, onSteeredSuggestions],
+    [
+      reviewId,
+      onSteeredRisks,
+      onSteeredSuggestions,
+      onSteerInfo,
+      onSteerToolCallDone,
+      onSteerToolCallStart,
+    ],
   );
 
   const finished = !streaming && suggestionsDone;
@@ -349,6 +369,11 @@ export function AgentSessionView({
 }
 
 function steerMeta(entry: SteerEntry): string {
+  if (entry.mode === "agent") {
+    if (entry.status === "running") return "Agent 深挖 · 运行中";
+    if (entry.status === "error") return "Agent 深挖 · 失败";
+    return "Agent 深挖 · 已完成";
+  }
   const label = entry.stage === "risks" ? "重评风险" : "重出建议";
   if (entry.status === "running") return `${label} · 运行中`;
   if (entry.status === "error") return `${label} · 失败`;
@@ -361,7 +386,8 @@ function SteerDetail({ entry }: { entry: SteerEntry }) {
       label={
         <>
           <MessageSquare className="h-3 w-3" />
-          POST /api/review/:id/steer · stage = {entry.stage}
+          POST /api/review/:id/steer · mode = {entry.mode}
+          {entry.mode === "stage" ? ` · stage = ${entry.stage}` : ""}
         </>
       }
     >
@@ -371,7 +397,9 @@ function SteerDetail({ entry }: { entry: SteerEntry }) {
       ) : null}
       {entry.status === "done" ? (
         <p className="mt-2 text-[10.5px] text-faint">
-          已替换 {entry.stage === "risks" ? "风险" : "建议"} 列表 · 共 {entry.resultCount ?? 0} 项
+          {entry.mode === "agent"
+            ? "Agent 深挖已完成 · 详情见上方工具调用时间线与提示信息"
+            : `已替换 ${entry.stage === "risks" ? "风险" : "建议"} 列表 · 共 ${entry.resultCount ?? 0} 项`}
         </p>
       ) : null}
     </ToolCard>
