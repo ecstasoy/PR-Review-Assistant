@@ -6,6 +6,7 @@ import { AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
 import type { File, Risk, Suggestion } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { parsePatch, type DiffLine as DiffLineModel } from "@/lib/parsePatch";
+import { highlightCode, langFromPath } from "@/lib/highlight";
 import { FileStatusBadge } from "@/components/ui/file-status-badge";
 import { InlineSuggestion } from "./InlineSuggestion";
 
@@ -23,6 +24,7 @@ export function FileDiff({ file, riskByLine, suggestionsByLine }: Props) {
   const [collapsed, setCollapsed] = useState(false);
   const hunks = parsePatch(file.patch);
   const riskCount = riskByLine?.size ?? 0;
+  const lang = langFromPath(file.path);
 
   return (
     <article
@@ -84,7 +86,7 @@ export function FileDiff({ file, riskByLine, suggestionsByLine }: Props) {
                   const anchorId = newLine !== null ? `L-${file.path}-${newLine}` : undefined;
                   return (
                     <div key={`${i}-${j}`}>
-                      <DiffRow line={line} sevHit={sevHit} anchorId={anchorId} />
+                      <DiffRow line={line} sevHit={sevHit} anchorId={anchorId} lang={lang} />
                       {suggestions?.map((s, k) => (
                         <InlineSuggestion key={`s-${k}`} suggestion={s} />
                       ))}
@@ -105,14 +107,32 @@ const sevBar: Record<Risk["severity"], string> = {
   low: "bg-low",
 };
 
+// tokenClass syntax token → Tailwind class（颜色取 globals.css @theme 暴露的 --tok-*）
+function tokenClass(kind: "kw" | "str" | "num" | "com" | "text"): string {
+  switch (kind) {
+    case "kw":
+      return "text-tok-kw font-semibold";
+    case "str":
+      return "text-tok-str";
+    case "num":
+      return "text-tok-num";
+    case "com":
+      return "italic text-tok-com";
+    default:
+      return "";
+  }
+}
+
 function DiffRow({
   line,
   sevHit,
   anchorId,
+  lang,
 }: {
   line: DiffLineModel;
   sevHit?: Risk["severity"];
   anchorId?: string;
+  lang: string;
 }) {
   const isAdd = line.type === "add";
   const isDel = line.type === "del";
@@ -161,7 +181,11 @@ function DiffRow({
         {sign}
       </span>
       <code className="overflow-x-auto whitespace-pre-wrap break-words px-1.5 pr-3 font-mono text-[12.5px] text-text">
-        {line.text || " "}
+        {highlightCode(line.text || " ", lang).map((tok, i) => (
+          <span key={i} className={tokenClass(tok.kind)}>
+            {tok.text}
+          </span>
+        ))}
       </code>
     </div>
   );
