@@ -61,7 +61,7 @@ func (c *RedisCache) Set(ctx context.Context, key string, value []byte, ttl time
 }
 
 // Incr 原子递增 + 首次 SET 时设 TTL，已存在的不重设。
-// 用 INCR + EXPIRE NX 两步实现；EXPIRE NX 只在 key 没 TTL 时设（首次）。
+// 用 INCR + EXPIRE 两步实现；只有 INCR 返回 1 的创建者设置 TTL。
 // ttl=0 时不设过期（等价 INCR 一句）。
 func (c *RedisCache) Incr(ctx context.Context, key string, ttl time.Duration) (int64, error) {
 	n, err := c.client.Incr(ctx, key).Result()
@@ -70,8 +70,7 @@ func (c *RedisCache) Incr(ctx context.Context, key string, ttl time.Duration) (i
 	}
 	if ttl > 0 && n == 1 {
 		// 仅首次（INCR 返回 1）设 TTL，避免每次请求都刷
-		// 用 ExpireNX 防 race condition（两个 goroutine 同时首次 INCR）
-		if _, err := c.client.ExpireNX(ctx, key, ttl).Result(); err != nil {
+		if _, err := c.client.Expire(ctx, key, ttl).Result(); err != nil {
 			// EXPIRE 失败不致命（计数器仍工作）；记 warn 由调用方处理
 			return n, fmt.Errorf("incr: set expire failed (count saved): %w", err)
 		}
