@@ -1,17 +1,11 @@
-import type { Risk, Suggestion } from "./types";
+import type { File, PrMeta, Risk, Suggestion } from "./types";
 
-export interface PrMeta {
-  id: string;
-  owner: string;
-  repo: string;
-  pr: number;
-  url: string;
-  head_sha: string;
-  title: string;
-}
+// 重导出方便老消费者继续 import 自此处；新代码请直接从 ./types 取
+export type { PrMeta } from "./types";
 
 export interface StreamCallbacks {
   onPr?: (pr: PrMeta) => void;
+  onFiles?: (files: File[]) => void;
   onSummaryDelta?: (delta: string) => void;
   onRisksDone?: (risks: Risk[]) => void;
   onSuggestionsDone?: (suggestions: Suggestion[]) => void;
@@ -94,6 +88,9 @@ function dispatch(ev: ParsedFrame, cb: StreamCallbacks): void {
   switch (ev.type) {
     case "pr":
       cb.onPr?.(parsed as PrMeta);
+      break;
+    case "files":
+      cb.onFiles?.(parsed as File[]);
       break;
     case "summary_delta": {
       const p = parsed as { delta?: string };

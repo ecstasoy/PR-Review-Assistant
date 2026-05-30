@@ -16,7 +16,7 @@ export interface Patch {
   after: string;
 }
 
-// File PR 改动文件；raw unified diff text 在 patch 字段，前端用 react-diff-viewer-continued 渲染
+// File PR 改动文件；raw unified diff text 在 patch 字段
 export interface File {
   path: string;
   status: "added" | "modified" | "removed" | "renamed";
@@ -34,7 +34,26 @@ export interface Suggestion {
   patch?: Patch | null; // LLM 给不出具体代码改写时为 null / 省略
 }
 
-export interface ReviewResult {
+// Stats PR 体量统计
+export interface Stats {
+  files: number;
+  additions: number;
+  deletions: number;
+  commits: number;
+  comments: number;
+}
+
+// Check 单个 CI 检查项
+export interface Check {
+  name: string;
+  status: "passing" | "failing" | "pending" | string; // 容忍未知
+  duration_ms: number;
+  note?: string; // check-run output.summary（如 coverage "82.4% (-0.3%)"）
+}
+
+// PrMeta 评审 SSE pr 事件 / detail 共享的 PR 元信息
+// 字段对齐 gh.PullRequest (A1/A2/A3/author_role PR) 经 prMetaPayload + cachedPayload 透出的形状
+export interface PrMeta {
   id: string;
   owner: string;
   repo: string;
@@ -42,9 +61,16 @@ export interface ReviewResult {
   url: string;
   head_sha: string;
   title: string;
-  summary: string;
-  risks?: Risk[];          // 后续 PR 填
-  suggestions?: Suggestion[]; // 后续 PR 填
+  author?: string;
+  author_role?: string; // OWNER / MEMBER / COLLABORATOR / CONTRIBUTOR / FIRST_TIMER / NONE
+  state?: string; // open / closed / merged
+  labels?: string[];
+  base_ref?: string;
+  head_ref?: string;
+  pr_created_at?: string; // RFC3339
+  stats?: Stats;
+  ci?: "passing" | "failing" | "pending" | string;
+  checks?: Check[];
 }
 
 // ReviewSummary /api/reviews 列表项；不含 payload
@@ -55,12 +81,39 @@ export interface ReviewSummary {
   pr: number;
   head_sha: string;
   title?: string;
-  created_at: string; // RFC3339
+  created_at: string; // RFC3339（评审记录创建时间）
+  ci?: string;
+  risk_counts?: { high: number; medium: number; low: number };
 }
 
-// ReviewDetail /api/reviews/:id 详情；inline 缓存 payload
+// ReviewDetail /api/reviews/:id 详情；inline 缓存 payload + 全套 PR meta
 export interface ReviewDetail extends ReviewSummary {
+  // PR meta（A1+A2+A3+author_role）
+  author?: string;
+  author_role?: string;
+  state?: string;
+  labels?: string[];
+  base_ref?: string;
+  head_ref?: string;
+  pr_created_at?: string;
+  stats?: Stats;
+  checks?: Check[];
+
   files?: File[];
+  summary: string;
+  risks?: Risk[];
+  suggestions?: Suggestion[];
+}
+
+// 兼容旧导出（lib/api.ts ReviewResult 类型已无主动消费者）
+export interface ReviewResult {
+  id: string;
+  owner: string;
+  repo: string;
+  pr: number;
+  url: string;
+  head_sha: string;
+  title: string;
   summary: string;
   risks?: Risk[];
   suggestions?: Suggestion[];
@@ -70,6 +123,8 @@ export type EventType =
   | "summary_delta"
   | "risks_done"
   | "suggestions_done"
+  | "files"
+  | "info"
   | "error"
   | "done";
 
