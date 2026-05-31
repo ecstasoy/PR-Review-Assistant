@@ -63,4 +63,8 @@ func Register(r *gin.Engine, d Deps) {
 	// Adopt：把 review 里第 idx 条 suggestion 转成 GitHub PR review comment 发出去
 	// 需要登录 + 对 repo 有 comment 权限；详见 perms 端点
 	g.POST("/review/:id/comment/:idx", expensive, PostAdoptComment(d))
+
+	// 同上但更进一步：comment + GraphQL apply → 一键 commit 到 PR 分支
+	// 需要 write 权限；fork PR 不允许编辑时 apply 会失败，comment 仍上 PR
+	g.POST("/review/:id/commit/:idx", expensive, PostAdoptCommit(d))
 }
