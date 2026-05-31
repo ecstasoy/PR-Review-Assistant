@@ -6,9 +6,11 @@ import { ExternalLink, X, Zap } from "lucide-react";
 
 import { useNotifications, type Notification } from "@/lib/notifications";
 
-// ToastContainer 右下角浮窗；监听新 webhook 通知，弹出 + 5s 自动消失
-// 多条堆叠，按时间倒序（最新在顶）
-// 不持久化已读：刷新页面就重置
+// ToastContainer 右下角浮窗；监听新 webhook 通知，弹出 + 6.5s 自动消失
+// 多条堆叠（最多 2 条同时显示），按时间倒序（最新在顶）
+// 刷新页面 useNotifications 走 baseline 静默路径不会重灌历史
+const MAX_VISIBLE = 2;
+
 export function ToastContainer() {
   const { newOnes } = useNotifications(15_000);
   const [visible, setVisible] = useState<Notification[]>([]);
@@ -16,10 +18,10 @@ export function ToastContainer() {
   useEffect(() => {
     if (newOnes.length === 0) return;
     setVisible((prev) => {
-      // 防重复（多 tick 同条都 push）
+      // 防重复（多 tick 同条都 push）+ 限堆叠数
       const seen = new Set(prev.map((p) => p.id));
       const fresh = newOnes.filter((n) => !seen.has(n.id));
-      return [...fresh, ...prev].slice(0, 4); // 最多同时显 4 条
+      return [...fresh, ...prev].slice(0, MAX_VISIBLE);
     });
   }, [newOnes]);
 
