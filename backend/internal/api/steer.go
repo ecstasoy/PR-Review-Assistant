@@ -8,12 +8,14 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/agent"
 	gh "github.com/ecstasoy/PR-Review-Assistant/backend/internal/github"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/llm"
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/memory"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/prctx"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/review"
 )
@@ -170,8 +172,20 @@ func PostSteer(d Deps) gin.HandlerFunc {
 				toolList += " / search_repo"
 				hasSearchRepo = true
 			}
+
+			// 取会话记忆：按 review_id 拉同一对话室之前几轮 user/assistant
+			// 错误 fail-soft 为 nil（memory 是增强不是依赖）；turns 顺序 = 时间序最旧在前
+			var priorTurns []memory.Turn
+			if d.Memory != nil {
+				if prior, gerr := d.Memory.Get(ctx, id); gerr != nil {
+					slog.Warn("steer load memory failed; running without history", "err", gerr, "id", id)
+				} else {
+					priorTurns = prior
+				}
+			}
+
 			writeSSE(c.Writer, "info", map[string]string{
-				"message": "Agent 启动：可调用 " + toolList + " 工具深挖",
+				"message": fmt.Sprintf("Agent 启动：可调用 %s 工具深挖（已记忆 %d 轮对话）", toolList, len(priorTurns)),
 				"stage":   "agent",
 			})
 			c.Writer.Flush()
@@ -195,11 +209,27 @@ func PostSteer(d Deps) gin.HandlerFunc {
 				sysPrompt += "\n" +
 					"- `search_repo`：在全仓 RAG 索引按 query 语义检索。**只在「相关代码」段不够回答时**才调，并换一个更精准的 query（如具体函数名 / 模块名），避免与初始召回重复。"
 			}
+			if len(priorTurns) > 0 {
+				sysPrompt += "\n\n## 会话历史\n" +
+					"用户和你之前已有过多轮对话（下方 messages 含历史 user/assistant 交替）。" +
+					"回答时延续上下文 —— 若用户说『那个』『它』『上面提到的』等指代，应解析到历史中的具体对象。"
+			}
 			sysPrompt += "\n\n## 输出\n" +
 				"用一段简洁中文文字回答（不要 JSON）。优先引用具体文件路径 + 行为，让读者能直接定位。"
 			userPrompt := buildAgentUserPrompt(pr, text, pCtx)
 
-			result, err := a.Run(ctx, llm.Request{System: sysPrompt, User: userPrompt})
+			// 装载 messages：sys + 历史 (user/assistant 交替) + 当前 user
+			// 历史的 tool_calls / observation 不入；agent 需要时会重新调工具
+			msgs := []llm.Message{{Role: "system", Content: sysPrompt}}
+			for _, t := range priorTurns {
+				msgs = append(msgs,
+					llm.Message{Role: "user", Content: t.UserText},
+					llm.Message{Role: "assistant", Content: t.AgentText},
+				)
+			}
+			msgs = append(msgs, llm.Message{Role: "user", Content: userPrompt})
+
+			result, err := a.Run(ctx, llm.Request{Messages: msgs})
 			if err != nil {
 				slog.Warn("steer agent run failed", "err", err, "steps", result.Steps)
 				// 仅当 agent 没产出任何文字时才推 error；有 Output 时下面 info 帧已能传达
@@ -223,6 +253,18 @@ func PostSteer(d Deps) gin.HandlerFunc {
 					"message": fmt.Sprintf("Agent 完成（%d 步）：%s", result.Steps, result.Output),
 					"stage":   "agent",
 				})
+				// 写回记忆：text 是用户原始引导（不含 PR 上下文 / L4 召回），重新装载时 buildAgentUserPrompt 会再拼
+				// 只有产出非空才写，避免空回答污染历史
+				if d.Memory != nil {
+					if mErr := d.Memory.Append(ctx, id, memory.Turn{
+						UserText:  text,
+						AgentText: result.Output,
+						CreatedAt: time.Now(),
+						Steps:     result.Steps,
+					}); mErr != nil {
+						slog.Warn("steer save memory failed; turn lost", "err", mErr, "id", id)
+					}
+				}
 			}
 			writeSSE(c.Writer, "done", map[string]any{})
 			c.Writer.Flush()

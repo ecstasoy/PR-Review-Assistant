@@ -197,6 +197,13 @@ func DeleteReview(d Deps) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
+		// 顺手清掉 agent 追问会话记忆；避免 7 天孤儿驻留 Redis
+		// 失败仅 warn——store 已删完整事务，memory 残留只是占点空间
+		if d.Memory != nil {
+			if mErr := d.Memory.Reset(c.Request.Context(), id); mErr != nil {
+				slog.Warn("delete review: reset memory failed", "err", mErr, "id", id)
+			}
+		}
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	}
 }

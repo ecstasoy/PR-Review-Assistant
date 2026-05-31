@@ -7,6 +7,7 @@ import (
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/github"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/index"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/llm"
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/memory"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/oauth"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/prctx"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/session"
@@ -21,6 +22,7 @@ import (
 // Retriever 可为 nil（RAG 关闭）；缺失时 prctx 跳 L4
 // Indexer 可为 nil（同 Retriever；通常与 Retriever 同实例，B4 引入分接口）
 // OAuthClient + Sessions 可为 nil（OAuth 未配时 /api/auth/* 返 503）
+// Memory 可为 nil（关闭 agent 追问会话记忆）；建议生产装上，提升多轮追问体验
 type Deps struct {
 	Fetcher     github.Fetcher
 	Provider    llm.Provider
@@ -32,6 +34,7 @@ type Deps struct {
 	Indexer     index.Indexer
 	OAuthClient *oauth.Client
 	Sessions    *session.Manager
+	Memory      memory.SessionStore
 }
 
 // RegisterWithSecret 同 Register 但接受 webhook secret 显式注入
