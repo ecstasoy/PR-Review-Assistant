@@ -11,13 +11,16 @@ import (
 	"strings"
 
 	gh "github.com/ecstasoy/PR-Review-Assistant/backend/internal/github"
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/index"
 )
 
-// 三个 builtin tool：read_file / list_dir / grep_patches
+// 四个 builtin tool：read_file / list_dir / grep_patches / search_repo
 //
-// 安全设计（沙盒）：所有 tool 的 file 参数必须落在 cachedFiles 内，
-// 不能逃出 PR 改动集 —— 防止 LLM 通过引导任意读取外部 / 系统文件。
-// 文件集对应 review 那一刻的 cached payload，跟 prctx.Context.L2Files 同源。
+// 沙盒设计分两类：
+//  1. read_file / list_dir / grep_patches：限本 PR 改动集（in-memory cachedFiles）
+//     防 LLM 被 prompt injection 引导任意读 fs。
+//  2. search_repo：限 scope（owner/repo）内的预索引 chunk
+//     全仓视野走 RAG 召回，不开放裸 fs / 任意 GitHub API。
 
 // NewReadFileTool 读单个改动文件的 patch hunk + 受限元数据。
 // args: { "file": "path/to/file" }
@@ -152,13 +155,92 @@ func NewGrepTool(files []gh.File) Tool {
 	}
 }
 
-// RegisterDefaults 把三个 builtin tool 都注册到 r。
+// RegisterDefaults 把三个 PR 沙盒工具都注册到 r（不含 search_repo）。
 // 调用方在每次 review steer / agent 循环开始时构造 Registry，
 // 用本 PR 的 files 绑定沙盒边界。
+// 想接 RAG 全仓检索用 RegisterDefaultsWithRAG。
 func RegisterDefaults(r *Registry, files []gh.File) {
 	r.Register(NewReadFileTool(files))
 	r.Register(NewListDirTool(files))
 	r.Register(NewGrepTool(files))
+}
+
+// RegisterDefaultsWithRAG 在 RegisterDefaults 基础上额外注册 search_repo。
+// retriever 为 nil / NoopRetriever / scope 为空 任一条件成立时跳过 search_repo，
+// agent 仍可用其余三个 PR 沙盒工具。
+func RegisterDefaultsWithRAG(r *Registry, files []gh.File, retriever index.Retriever, scope string) {
+	RegisterDefaults(r, files)
+	if retriever == nil {
+		return
+	}
+	if _, isNoop := retriever.(index.NoopRetriever); isNoop {
+		return
+	}
+	if strings.TrimSpace(scope) == "" {
+		return
+	}
+	r.Register(NewSearchRepoTool(retriever, scope))
+}
+
+// NewSearchRepoTool 让 agent 在 RAG 全仓索引里语义检索代码片段。
+// 与 prctx L4 一次性注入不同：agent 可按对话进展不断换 query 精化召回
+// （例：第一轮 "config loading" 没命中，第二轮换 "env parse" 命中）。
+//
+// scope 在构造时 bound，避免 LLM 试图跨仓串扰；retriever 同样在构造时 bound。
+// 返回每条 chunk 的 file / score / 可选 PR 号 + 截断后的内容。
+func NewSearchRepoTool(retriever index.Retriever, scope string) Tool {
+	return &simpleTool{
+		spec: ToolSpec{
+			Name:        "search_repo",
+			Description: "在全仓 RAG 索引中按 query 语义搜索代码片段。用于查找本 PR 改动以外的相关代码（如调用点、类似实现、main 分支既有逻辑）",
+			Parameters:  json.RawMessage(`{"type":"object","required":["query"],"properties":{"query":{"type":"string","description":"自然语言查询；建议带具体关键词或函数名"},"top_k":{"type":"integer","description":"返回多少条结果，默认 5，最大 10"}}}`),
+		},
+		run: func(ctx context.Context, raw json.RawMessage) (string, error) {
+			var a struct {
+				Query string `json:"query"`
+				TopK  int    `json:"top_k"`
+			}
+			if err := json.Unmarshal(raw, &a); err != nil {
+				return "", fmt.Errorf("search_repo: 参数解析失败: %w", err)
+			}
+			if strings.TrimSpace(a.Query) == "" {
+				return "", errors.New("search_repo: query 不能为空")
+			}
+			if retriever == nil {
+				return "", errors.New("search_repo: retriever 未配置")
+			}
+			if a.TopK <= 0 {
+				a.TopK = 5
+			}
+			if a.TopK > 10 {
+				a.TopK = 10
+			}
+			refs, err := retriever.Retrieve(ctx, scope, a.Query, a.TopK)
+			if err != nil {
+				return "", fmt.Errorf("search_repo: 检索失败: %w", err)
+			}
+			if len(refs) == 0 {
+				return fmt.Sprintf("（query=%q 在 scope=%q 无命中；可能 RAG 未索引或全部被阈值过滤）", a.Query, scope), nil
+			}
+			var sb strings.Builder
+			for i, r := range refs {
+				snippet := r.Snippet
+				const snippetCap = 800
+				if len(snippet) > snippetCap {
+					snippet = snippet[:snippetCap] + "...（已截断）"
+				}
+				prTag := ""
+				if r.PRNumber > 0 {
+					prTag = fmt.Sprintf("  pr=#%d", r.PRNumber)
+				}
+				fmt.Fprintf(&sb, "[%d] %s  score=%.2f%s\n%s\n", i+1, r.File, r.Score, prTag, snippet)
+				if i < len(refs)-1 {
+					sb.WriteString("---\n")
+				}
+			}
+			return sb.String(), nil
+		},
+	}
 }
 
 // simpleTool ToolSpec + run 函数的轻量包装；
