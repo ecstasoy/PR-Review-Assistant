@@ -397,6 +397,7 @@ function hydrateFromDetail(d: ReviewDetail, h: HydrateSetters) {
     stats: d.stats,
     ci: d.ci,
     checks: d.checks,
+    source: d.source,
   });
   h.setSummary(d.summary ?? "");
   h.setRisks(d.risks ?? []);

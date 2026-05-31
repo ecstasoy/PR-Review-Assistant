@@ -18,6 +18,9 @@ import (
 // 前端按"字段缺失即未知"处理即可。
 type cachedPayload struct {
 	Title       string          `json:"title,omitempty"`
+	// Source 标记本次评审是怎么来的："manual" 用户手动粘 URL；"webhook" GitHub 推 PR 自动评
+	// 前端按这个字段在列表 / 详情顶栏渲染 ⚡ "自动" chip + 触发 Toast 通知
+	Source      string          `json:"source,omitempty"`
 	Author      string          `json:"author,omitempty"`
 	AuthorRole  string          `json:"author_role,omitempty"`
 	Lang        string          `json:"lang,omitempty"` // PR 主语言（按文件后缀多数派算），/history 语言筛选用

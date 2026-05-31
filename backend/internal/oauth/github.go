@@ -49,13 +49,22 @@ type TokenResponse struct {
 	RefreshTokenExpiresIn int    `json:"refresh_token_expires_in,omitempty"`
 }
 
-// Client GitHub OAuth 客户端；不持 state，handler 自行管 state 防 CSRF
+// Client GitHub OAuth + App 客户端；不持 state，handler 自行管 state 防 CSRF
+// 字段分两组：
+//   - ClientID/Secret/RedirectURI: OAuth web flow（用户登录）
+//   - AppID/PrivateKeyPEM: GitHub App JWT 签名（webhook → installation token → bot 身份调 GitHub）
 type Client struct {
 	ClientID     string
 	ClientSecret string
 	// RedirectURI 必须跟 GitHub App settings 里 Callback URL 完全一致
 	// e.g. https://lgtm-alpha.vercel.app/api/auth/github/callback
 	RedirectURI string
+
+	// AppID + PrivateKeyPEM 用于 webhook 路径换 installation token（bot 身份发评审）
+	// 没配时 webhook 仍能验签 + 触发评审，但无法 post bot review 回 PR；仅在 lgtm.com 多一条
+	AppID         int64
+	PrivateKeyPEM []byte
+
 	// HTTPClient 可选；nil 时用 default + 10s 超时
 	HTTPClient *http.Client
 }

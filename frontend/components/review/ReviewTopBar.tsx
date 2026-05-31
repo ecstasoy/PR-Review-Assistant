@@ -77,6 +77,14 @@ export function ReviewTopBar({
           <code className="rounded bg-surface-2 px-[5px] text-[11px]">
             {pr.head_sha?.slice(0, 11) ?? ""}
           </code>
+          {pr.source === "webhook" ? (
+            <span
+              className="ml-1 inline-flex h-[16px] items-center gap-0.5 rounded-full bg-accent-soft px-1.5 text-[10px] font-medium text-accent"
+              title="GitHub webhook 自动触发评审"
+            >
+              ⚡ 自动
+            </span>
+          ) : null}
         </div>
       </div>
 

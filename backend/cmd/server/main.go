@@ -89,7 +89,7 @@ func main() {
 		}
 	}
 
-	api.Register(r, deps)
+	api.RegisterWithSecret(r, deps, cfg.GithubAppWebhookSec)
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	slog.Info("server starting", "addr", addr)
@@ -167,9 +167,11 @@ func buildDeps(cfg config.Config) api.Deps {
 	// 同时 SessionManager 复用 deps.Cache（Redis 跨实例共享 session）
 	if cfg.GithubOAuthClientID != "" && cfg.GithubOAuthSecret != "" {
 		deps.OAuthClient = &oauth.Client{
-			ClientID:     cfg.GithubOAuthClientID,
-			ClientSecret: cfg.GithubOAuthSecret,
-			RedirectURI:  cfg.GithubOAuthRedirectURI,
+			ClientID:      cfg.GithubOAuthClientID,
+			ClientSecret:  cfg.GithubOAuthSecret,
+			RedirectURI:   cfg.GithubOAuthRedirectURI,
+			AppID:         cfg.GithubAppID,
+			PrivateKeyPEM: []byte(cfg.GithubAppPrivateKey),
 		}
 		deps.Sessions = session.New(deps.Cache, 0)
 		slog.Info("oauth ready", "client_id_prefix", cfg.GithubOAuthClientID[:min(8, len(cfg.GithubOAuthClientID))], "redirect", cfg.GithubOAuthRedirectURI)
