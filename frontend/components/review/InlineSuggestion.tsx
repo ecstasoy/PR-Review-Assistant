@@ -14,10 +14,10 @@ interface Props {
   onCopy?: () => void;
 }
 
-type CommentState =
+type ActionState =
   | { kind: "idle" }
   | { kind: "posting" }
-  | { kind: "done"; url: string }
+  | { kind: "done"; url: string; commitSHA?: string; halfDone?: boolean; halfDoneReason?: string }
   | { kind: "error"; msg: string };
 
 // InlineSuggestion 行内建议气泡（DiffView 内嵌锚定到对应代码行）
@@ -27,7 +27,8 @@ type CommentState =
 export function InlineSuggestion({ suggestion, onCopy }: Props) {
   const adopt = useAdopt();
   const [copied, setCopied] = useState(false);
-  const [comment, setComment] = useState<CommentState>({ kind: "idle" });
+  const [comment, setComment] = useState<ActionState>({ kind: "idle" });
+  const [commit, setCommit] = useState<ActionState>({ kind: "idle" });
   const [dismissed, setDismissed] = useState(false);
 
   if (dismissed) return null;
@@ -49,6 +50,23 @@ export function InlineSuggestion({ suggestion, onCopy }: Props) {
       setComment({ kind: "done", url: r.html_url ?? "" });
     } catch (e) {
       setComment({ kind: "error", msg: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  async function postCommit() {
+    if (!adopt) return;
+    setCommit({ kind: "posting" });
+    try {
+      const r = await adopt.postCommit(suggestion);
+      setCommit({
+        kind: "done",
+        url: r.html_url ?? "",
+        commitSHA: r.commit_sha,
+        halfDone: r.comment_posted_but_commit_failed,
+        halfDoneReason: r.commit_fail_reason,
+      });
+    } catch (e) {
+      setCommit({ kind: "error", msg: e instanceof Error ? e.message : String(e) });
     }
   }
 
@@ -133,20 +151,33 @@ export function InlineSuggestion({ suggestion, onCopy }: Props) {
           </button>
         )}
 
-        {/* ✅ 提交：G6c 预留 stub */}
-        <button
-          type="button"
-          disabled
-          title={
-            commitEnabled
-              ? "一键提交将在 G6c 上线"
-              : disableReason() || "无 push 权限"
-          }
-          className="inline-flex h-7 items-center gap-1 rounded-md border border-border-strong bg-surface px-2.5 text-xs text-muted opacity-60 cursor-not-allowed"
-        >
-          <GitCommit className="h-3 w-3" />
-          直接提交
-        </button>
+        {/* ✅ 提交：G6c 真接通 */}
+        {commitEnabled ? (
+          <button
+            type="button"
+            onClick={postCommit}
+            disabled={commit.kind === "posting"}
+            className="inline-flex h-7 items-center gap-1 rounded-md border border-border-strong bg-surface px-2.5 text-xs text-text-2 hover:bg-surface-hover hover:text-text disabled:opacity-60"
+            title="发 review comment 并立即 GitHub apply 触发一条 commit 到 PR 分支"
+          >
+            <GitCommit className="h-3 w-3" />
+            {commit.kind === "posting" ? "提交中…" : "直接提交"}
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled
+            title={
+              !authenticated
+                ? "登录后才能提交"
+                : disableReason() || "无 push 权限；可改用「评论」"
+            }
+            className="inline-flex h-7 items-center gap-1 rounded-md border border-border-strong bg-surface px-2.5 text-xs text-muted opacity-60 cursor-not-allowed"
+          >
+            <GitCommit className="h-3 w-3" />
+            直接提交
+          </button>
+        )}
 
         {/* 📋 复制：永远可用 */}
         <button
@@ -190,6 +221,46 @@ export function InlineSuggestion({ suggestion, onCopy }: Props) {
       {comment.kind === "error" ? (
         <p className="mt-2 text-[11px] text-high" title={comment.msg}>
           发送失败：{comment.msg}
+        </p>
+      ) : null}
+
+      {/* 提交后反馈：3 态 */}
+      {commit.kind === "done" && !commit.halfDone ? (
+        <p className="mt-2 inline-flex items-center gap-1.5 text-[11px] text-ok">
+          <Check className="h-3 w-3" />
+          已提交 commit {commit.commitSHA ? commit.commitSHA.slice(0, 7) : ""}
+          {commit.url ? (
+            <a
+              href={commit.url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-0.5 underline hover:opacity-80"
+            >
+              查看
+              <ExternalLink className="h-2.5 w-2.5" />
+            </a>
+          ) : null}
+        </p>
+      ) : null}
+      {commit.kind === "done" && commit.halfDone ? (
+        <p className="mt-2 text-[11px] text-med" title={commit.halfDoneReason}>
+          评论已上 PR，但 GitHub 拒绝自动 commit（可能是 fork 未开放编辑）。
+          {commit.url ? (
+            <a
+              href={commit.url}
+              target="_blank"
+              rel="noreferrer"
+              className="ml-1 inline-flex items-center gap-0.5 underline hover:opacity-80"
+            >
+              去 GitHub 手动 Apply
+              <ExternalLink className="h-2.5 w-2.5" />
+            </a>
+          ) : null}
+        </p>
+      ) : null}
+      {commit.kind === "error" ? (
+        <p className="mt-2 text-[11px] text-high" title={commit.msg}>
+          提交失败：{commit.msg}
         </p>
       ) : null}
     </div>

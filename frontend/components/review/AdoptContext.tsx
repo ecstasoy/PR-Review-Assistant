@@ -6,11 +6,15 @@ import type { Suggestion } from "@/lib/types";
 import type { PermsResponse } from "@/lib/perms";
 
 // AdoptResult 后端 /comment 或 /commit 端点成功返回字段
+// CommentPostedButCommitFailed 仅 /commit 端点返：comment 已上 PR 但 GraphQL apply 失败
+// （常见 fork PR maintainer_can_modify=false）→ 前端提示用户去 GitHub 手动 Apply
 export interface AdoptResult {
   ok: boolean;
   comment_id?: number;
   commit_sha?: string;
   html_url?: string;
+  comment_posted_but_commit_failed?: boolean;
+  commit_fail_reason?: string;
 }
 
 // AdoptContextValue 给 InlineSuggestion 用的 props 集合
@@ -57,10 +61,24 @@ export function AdoptProvider({ reviewId, perms, permsLoading, suggestions, chil
     [reviewId, suggestions],
   );
 
-  // G6c 之前 stub：直接 reject 让 UI 显示"功能开发中"
-  const postCommit = useCallback(async (): Promise<AdoptResult> => {
-    throw new Error("一键提交将在 G6c 上线，先用「💬 评论」+ GitHub UI 一键 Apply");
-  }, []);
+  const postCommit = useCallback(
+    async (s: Suggestion): Promise<AdoptResult> => {
+      if (!reviewId) throw new Error("评审还在流式生成中，请等结束");
+      const idx = suggestions.indexOf(s);
+      if (idx < 0) throw new Error("找不到建议在列表中的位置");
+      const res = await fetch(`/api/review/${encodeURIComponent(reviewId)}/commit/${idx}`, {
+        method: "POST",
+        credentials: "include",
+      });
+      const data = (await res.json()) as { error?: string } & AdoptResult;
+      if (!res.ok) {
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      // 200 + ok=false：comment 上了但 apply 失败（不抛错，让 caller 区分两态显示）
+      return data;
+    },
+    [reviewId, suggestions],
+  );
 
   const value = useMemo(
     () => ({ reviewId, perms, permsLoading, suggestions, postComment, postCommit }),
