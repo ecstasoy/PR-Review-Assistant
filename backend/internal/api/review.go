@@ -206,7 +206,12 @@ func PostReview(d Deps) gin.HandlerFunc {
 			case ev, ok := <-merged:
 				if !ok {
 					if d.Store != nil && !stageErrObserved && risksData != nil && suggestionsData != nil {
-						persistReview(d.Store, pr, summaryBuf.String(), risksData, suggestionsData, budget)
+						if id := persistReview(d.Store, pr, summaryBuf.String(), risksData, suggestionsData, budget); id != "" {
+							// 让流式页前端拿到 ULID 启用「💬 评论 / ✅ 提交 / SteerComposer 追问」按钮
+							// （没这帧前端只能等用户回首页点列表条目）
+							raw, _ := json.Marshal(map[string]string{"id": id})
+							writeSSERaw(w, "review_id", raw)
+						}
 					}
 					writeSSERaw(w, "done", json.RawMessage(`{}`))
 					return false
@@ -284,7 +289,8 @@ func prMetaPayload(pr gh.PullRequest, sourceURL string) map[string]any {
 
 // persistReview 把本次评审序列化后写入 store；缓存写失败仅记日志，不影响响应。
 // 用 context.Background() 与请求生命周期解耦：写缓存时客户端可能已断开。
-func persistReview(s store.Store, pr gh.PullRequest, summary string, risks, suggestions json.RawMessage, budget *budgetReportPayload) {
+// 返 ID 让 caller emit SSE review_id 帧（前端在流式页面拿到 ULID 后启用 adopt 按钮 / SteerComposer）
+func persistReview(s store.Store, pr gh.PullRequest, summary string, risks, suggestions json.RawMessage, budget *budgetReportPayload) string {
 	payload, err := json.Marshal(cachedPayload{
 		Title:        pr.Title,
 		Files:        pr.Files,
@@ -306,7 +312,7 @@ func persistReview(s store.Store, pr gh.PullRequest, summary string, risks, sugg
 	})
 	if err != nil {
 		slog.Error("cache marshal", "err", err)
-		return
+		return ""
 	}
 	rec := &store.Record{
 		ID:       store.NewID(),
@@ -318,7 +324,9 @@ func persistReview(s store.Store, pr gh.PullRequest, summary string, risks, sugg
 	}
 	if err := s.Put(context.Background(), rec); err != nil {
 		slog.Error("cache put", "err", err, "owner", pr.Owner, "repo", pr.Repo, "pr", pr.Number)
+		return ""
 	}
+	return rec.ID
 }
 
 // stageRAGQueryFor 不同 stage 用不同 RAG query；空返回 = caller fallback 到默认 L1Meta。

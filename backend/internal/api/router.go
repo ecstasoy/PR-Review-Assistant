@@ -67,4 +67,7 @@ func Register(r *gin.Engine, d Deps) {
 	// 同上但更进一步：comment + GraphQL apply → 一键 commit 到 PR 分支
 	// 需要 write 权限；fork PR 不允许编辑时 apply 会失败，comment 仍上 PR
 	g.POST("/review/:id/commit/:idx", expensive, PostAdoptCommit(d))
+
+	// 撤回 comment：cid = GitHub PR review comment databaseId（不是 review idx）
+	g.DELETE("/review/:id/comment/:cid", read, DeleteAdoptComment(d))
 }

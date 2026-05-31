@@ -122,6 +122,52 @@ func PostAdoptComment(d Deps) gin.HandlerFunc {
 	}
 }
 
+// DeleteAdoptComment DELETE /api/review/:id/comment/:cid
+// :cid 是 GitHub PR review comment 的 databaseId（来自 PostAdoptComment 的返值）
+// 用户在 InlineSuggestion 的「已发到 PR」按钮旁可以「× 撤回」
+//
+// 检查链：session → review 存在（用来推出 owner/repo）→ 调 GitHub DELETE
+// 不再 verify 用户对 review 的所有权（comment 作者校验交给 GitHub 拒）
+func DeleteAdoptComment(d Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		s := CurrentSession(c)
+		if s == nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "未登录"})
+			return
+		}
+		if d.OAuthClient == nil || d.Store == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "OAuth / store not configured"})
+			return
+		}
+
+		id := c.Param("id")
+		commentID, err := strconv.ParseInt(c.Param("cid"), 10, 64)
+		if err != nil || commentID <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "cid must be positive integer"})
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 8*time.Second)
+		defer cancel()
+
+		rec, err := d.Store.GetByID(ctx, id)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "store: " + err.Error()})
+			return
+		}
+		if rec == nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "review not found"})
+			return
+		}
+
+		if err := d.OAuthClient.DeletePRComment(ctx, s.AccessToken, rec.Owner, rec.Repo, commentID); err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "delete comment failed: " + err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	}
+}
+
 // buildSuggestionCommentBody 把一条 Suggestion 拼成 GitHub PR review comment 的 markdown
 // 关键：```suggestion 块只放 patch.after，GitHub 会自动算出与原代码的 diff 并支持一键 Apply
 // 缺 patch 时退化为纯文字建议（仍然有用，只是 PR author 要手动改）

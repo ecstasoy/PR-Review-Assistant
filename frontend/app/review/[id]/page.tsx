@@ -81,6 +81,10 @@ function ReviewDetailPageContent({ id }: { id: string }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeFile, setActiveFile] = useState<string | undefined>(undefined);
   const [expandRequest, setExpandRequest] = useState<{ path: string; nonce: number } | null>(null);
+  // 流式跑完后后端通过 SSE review_id 帧回传 ULID；cached 模式直接用 URL 里的 id
+  // 见 backend/internal/api/review.go persistReview 返值 + writeSSE("review_id", ...)
+  const [streamedReviewID, setStreamedReviewID] = useState<string | null>(null);
+  const effectiveReviewID = isStreaming ? streamedReviewID : id;
 
   // perms：用 PR meta 查当前用户对 base repo 的权限；驱动 InlineSuggestion 的「评论 / 提交」按钮
   // pr 未到位时 owner/repo 是 undefined → usePerms skip fetch
@@ -117,6 +121,7 @@ function ReviewDetailPageContent({ id }: { id: string }) {
           setSuggestions(s);
           setSuggestionsDone(true);
         },
+        onReviewID: (rid) => !cancelled && setStreamedReviewID(rid),
         onToolCallStart: (call) =>
           !cancelled && setToolEvents((prev) => mergeToolStart(prev, call)),
         onToolCallDone: (call) =>
@@ -269,6 +274,13 @@ function ReviewDetailPageContent({ id }: { id: string }) {
   }
 
   return (
+    <AdoptProvider
+      reviewId={effectiveReviewID ?? undefined}
+      prMeta={pr ?? undefined}
+      perms={perms}
+      permsLoading={permsLoading}
+      suggestions={suggestions}
+    >
     <div className="flex h-screen flex-col bg-bg">
       <ReviewTopBar
         pr={pr}
@@ -310,20 +322,13 @@ function ReviewDetailPageContent({ id }: { id: string }) {
                 stageErrors={stageErrors}
               />
             ) : view === "diff" ? (
-              <AdoptProvider
-                reviewId={isStreaming ? undefined : id}
-                perms={perms}
-                permsLoading={permsLoading}
+              <DiffView
+                files={files}
+                risks={risks}
                 suggestions={suggestions}
-              >
-                <DiffView
-                  files={files}
-                  risks={risks}
-                  suggestions={suggestions}
-                  expandedFilePath={expandRequest?.path}
-                  expandedFileNonce={expandRequest?.nonce}
-                />
-              </AdoptProvider>
+                expandedFilePath={expandRequest?.path}
+                expandedFileNonce={expandRequest?.nonce}
+              />
             ) : (
               <AgentSessionView
                 pr={pr}
@@ -336,7 +341,7 @@ function ReviewDetailPageContent({ id }: { id: string }) {
                 risksDone={risksDone}
                 suggestionsDone={suggestionsDone}
                 streaming={streaming}
-                reviewId={isStreaming ? undefined : id}
+                reviewId={effectiveReviewID ?? undefined}
                 onSteeredRisks={setRisks}
                 onSteeredSuggestions={setSuggestions}
                 onSteerToolCallStart={(call) => setToolEvents((prev) => mergeToolStart(prev, call))}
@@ -350,11 +355,12 @@ function ReviewDetailPageContent({ id }: { id: string }) {
         {agentOpen ? (
           <AgentPanel
             onClose={() => setAgentOpen(false)}
-            reviewId={isStreaming ? undefined : id}
+            reviewId={effectiveReviewID ?? undefined}
           />
         ) : null}
       </div>
     </div>
+    </AdoptProvider>
   );
 }
 

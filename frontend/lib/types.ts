@@ -152,6 +152,7 @@ export type EventType =
   | "agent_text_delta"
   | "info"
   | "error"
+  | "review_id"
   | "done";
 
 export interface SseEvent {
