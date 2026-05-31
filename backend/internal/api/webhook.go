@@ -30,6 +30,9 @@ type WebhookPR struct {
 		HTMLURL string `json:"html_url"`
 		Title   string `json:"title"`
 		HeadSHA string `json:"-"` // 后端 Fetch 时拿
+		User    struct {
+			Login string `json:"login"`
+		} `json:"user"`
 	} `json:"pull_request"`
 	Repository struct {
 		Owner struct {
@@ -53,6 +56,9 @@ type WebhookIssueComment struct {
 		Number      int    `json:"number"`
 		HTMLURL     string `json:"html_url"`
 		Title       string `json:"title"`
+		User        struct {
+			Login string `json:"login"` // PR 作者；slash 触发时也通知 ta
+		} `json:"user"`
 		PullRequest *struct {
 			URL     string `json:"url"`      // API URL
 			HTMLURL string `json:"html_url"` // 用户面 URL
@@ -161,7 +167,10 @@ func handlePullRequestEvent(c *gin.Context, d Deps, body []byte) {
 		Title:          p.PullRequest.Title,
 		InstallationID: p.Installation.ID,
 		SenderLogin:    p.Sender.Login,
-		TriggerAction:  p.Action, // 给 bot review body 用（区分新评 vs 同步重评）
+		// PR author 也通知一份（synchronize 时 sender=pusher 可能不是 author）
+		// 同人时 PushNotification 内部 dedupe（其实不会，所以 caller 负责）
+		PRAuthorLogin: p.PullRequest.User.Login,
+		TriggerAction: p.Action, // 给 bot review body 用（区分新评 vs 同步重评）
 	})
 }
 
@@ -211,6 +220,7 @@ func handleIssueCommentEvent(c *gin.Context, d Deps, body []byte) {
 			Title:          p.Issue.Title,
 			InstallationID: p.Installation.ID,
 			SenderLogin:    p.Sender.Login,
+			PRAuthorLogin:  p.Issue.User.Login,
 		})
 	case "help":
 		go runSlashHelp(d, p.Repository.Owner.Login, p.Repository.Name, p.Issue.Number, p.Installation.ID)
@@ -265,6 +275,7 @@ func runSlashReview(d Deps, args slashReviewArgs) {
 		Title:          args.Title,
 		InstallationID: args.InstallationID,
 		SenderLogin:    args.SenderLogin,
+		PRAuthorLogin:  args.PRAuthorLogin,
 		TriggerAction:  "slash_review",
 	})
 }
@@ -299,6 +310,22 @@ type slashReviewArgs struct {
 	Title          string
 	InstallationID int64
 	SenderLogin    string
+	PRAuthorLogin  string
+}
+
+// uniqueRecipients 通知收件人去重：空字符串过滤；同名只保留一份
+// 用于 PR author == sender 的常见情况（opened 时一致）
+func uniqueRecipients(logins ...string) []string {
+	seen := make(map[string]bool, len(logins))
+	out := make([]string, 0, len(logins))
+	for _, l := range logins {
+		if l == "" || seen[l] {
+			continue
+		}
+		seen[l] = true
+		out = append(out, l)
+	}
+	return out
 }
 
 type webhookReviewArgs struct {
@@ -308,7 +335,12 @@ type webhookReviewArgs struct {
 	Number         int
 	Title          string
 	InstallationID int64
-	SenderLogin    string
+	// SenderLogin 触发本次事件的 GitHub 用户（push 的人 / 评论 /lgtm 的人）
+	SenderLogin string
+	// PRAuthorLogin PR 作者；通常跟 SenderLogin 同（opened 时一致），
+	// 但 synchronize 时 sender=pusher 可能不是 author；slash 时 sender=commenter 也不一定是 author
+	// 通知两个人都推一份（caller 内部 dedupe）确保 PR 作者总能收到
+	PRAuthorLogin string
 	// TriggerAction "opened" / "synchronize" / "reopened" / "slash_review"；
 	// 用来在 bot review body 里区分文案（"已重评 push 的最新 commit" vs "首次评审"）
 	TriggerAction string
@@ -330,8 +362,8 @@ func runWebhookReview(d Deps, args webhookReviewArgs) {
 	if d.Store != nil {
 		if rec, _ := d.Store.Get(ctx, pr.Owner, pr.Repo, pr.Number, pr.HeadSHA); rec != nil {
 			slog.Info("webhook: cache hit, skipping re-review", "review_id", rec.ID)
-			if args.SenderLogin != "" {
-				PushNotification(ctx, d.Cache, args.SenderLogin, Notification{
+			for _, login := range uniqueRecipients(args.SenderLogin, args.PRAuthorLogin) {
+				PushNotification(ctx, d.Cache, login, Notification{
 					ID:       newNotifID(),
 					ReviewID: rec.ID,
 					Owner:    pr.Owner, Repo: pr.Repo, PR: pr.Number, Title: args.Title,
@@ -402,14 +434,19 @@ func runWebhookReview(d Deps, args webhookReviewArgs) {
 		slog.Info("webhook: skip bot review (App ID / private key not configured)")
 	}
 
-	// Push 通知给 sender（评审完成）
-	if args.SenderLogin != "" && reviewID != "" {
-		PushNotification(ctx, d.Cache, args.SenderLogin, Notification{
-			ID:       newNotifID(),
-			ReviewID: reviewID,
-			Owner:    pr.Owner, Repo: pr.Repo, PR: pr.Number, Title: args.Title,
-			Source: "webhook",
-		})
+	// Push 通知给 sender + PR author（dedupe 同人）
+	// 一条 PR 评审能触发 toast 的人 = 触发事件的人 ∪ PR 作者
+	// 这样 PR 作者无论谁触发都看得到（同事 push 重评 / chat bot /lgtm 也通知 ta）
+	if reviewID != "" {
+		recipients := uniqueRecipients(args.SenderLogin, args.PRAuthorLogin)
+		for _, login := range recipients {
+			PushNotification(ctx, d.Cache, login, Notification{
+				ID:       newNotifID(),
+				ReviewID: reviewID,
+				Owner:    pr.Owner, Repo: pr.Repo, PR: pr.Number, Title: args.Title,
+				Source: "webhook",
+			})
+		}
 	}
 	slog.Info("webhook: review pipeline done",
 		"owner", pr.Owner, "repo", pr.Repo, "pr", pr.Number, "review_id", reviewID)
