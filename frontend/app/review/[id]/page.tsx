@@ -16,6 +16,8 @@ import { SummaryCard } from "@/components/review/SummaryCard";
 import { RisksList } from "@/components/review/RisksList";
 import { DiffView } from "@/components/review/DiffView";
 import { AgentPanel } from "@/components/review/AgentPanel";
+import { AdoptProvider } from "@/components/review/AdoptContext";
+import { usePerms } from "@/lib/perms";
 import {
   AgentSessionView,
   mergeToolDone,
@@ -79,6 +81,10 @@ function ReviewDetailPageContent({ id }: { id: string }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeFile, setActiveFile] = useState<string | undefined>(undefined);
   const [expandRequest, setExpandRequest] = useState<{ path: string; nonce: number } | null>(null);
+
+  // perms：用 PR meta 查当前用户对 base repo 的权限；驱动 InlineSuggestion 的「评论 / 提交」按钮
+  // pr 未到位时 owner/repo 是 undefined → usePerms skip fetch
+  const { perms, loading: permsLoading } = usePerms(pr?.owner, pr?.repo);
 
   const scrollRef = useRef<HTMLElement>(null);
   const pendingScroll = useRef<string | null>(null);
@@ -304,13 +310,20 @@ function ReviewDetailPageContent({ id }: { id: string }) {
                 stageErrors={stageErrors}
               />
             ) : view === "diff" ? (
-              <DiffView
-                files={files}
-                risks={risks}
+              <AdoptProvider
+                reviewId={isStreaming ? undefined : id}
+                perms={perms}
+                permsLoading={permsLoading}
                 suggestions={suggestions}
-                expandedFilePath={expandRequest?.path}
-                expandedFileNonce={expandRequest?.nonce}
-              />
+              >
+                <DiffView
+                  files={files}
+                  risks={risks}
+                  suggestions={suggestions}
+                  expandedFilePath={expandRequest?.path}
+                  expandedFileNonce={expandRequest?.nonce}
+                />
+              </AdoptProvider>
             ) : (
               <AgentSessionView
                 pr={pr}

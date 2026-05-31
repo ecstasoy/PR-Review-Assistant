@@ -59,4 +59,8 @@ func Register(r *gin.Engine, d Deps) {
 	g.POST("/auth/logout", read, AuthLogout(d.Sessions))
 	g.GET("/me", read, GetMe())
 	g.GET("/perms", read, GetPerms(d.OAuthClient))
+
+	// Adopt：把 review 里第 idx 条 suggestion 转成 GitHub PR review comment 发出去
+	// 需要登录 + 对 repo 有 comment 权限；详见 perms 端点
+	g.POST("/review/:id/comment/:idx", expensive, PostAdoptComment(d))
 }

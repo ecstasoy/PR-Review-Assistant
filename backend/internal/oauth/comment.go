@@ -1,0 +1,68 @@
+package oauth
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+)
+
+// Comment GitHub `/pulls/{n}/comments` 返回的 review comment 字段子集
+// HTMLUrl 让前端给用户跳到 GitHub 上看新发的 comment
+// NodeID 给后续 G6c GraphQL 的 applyPullRequestReviewThreadSuggestion 用（需要 thread node id，但 comment 创建后可查）
+type Comment struct {
+	ID      int64  `json:"id"`
+	NodeID  string `json:"node_id"`
+	HTMLUrl string `json:"html_url"`
+	Body    string `json:"body"`
+	Path    string `json:"path"`
+	Line    int    `json:"line"`
+}
+
+// PostPRComment 发一条 PR review comment（行内 ```suggestion 块由 caller 拼好放 body 里）
+// 必须传 commitID（head SHA）+ path + line，否则 GitHub 拒发；side="RIGHT"（after-diff，新代码侧）
+//
+// 文档 https://docs.github.com/rest/pulls/comments#create-a-review-comment-for-a-pull-request
+// 权限 pull_requests:write
+func (c *Client) PostPRComment(
+	ctx context.Context,
+	accessToken, owner, repo string,
+	prNumber int,
+	body, commitID, path string,
+	line int,
+) (*Comment, error) {
+	payload := map[string]any{
+		"body":      body,
+		"commit_id": commitID,
+		"path":      path,
+		"line":      line,
+		"side":      "RIGHT",
+	}
+	raw, _ := json.Marshal(payload)
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/pulls/%d/comments", owner, repo, prNumber)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
+	if err != nil {
+		return nil, fmt.Errorf("oauth: build comment req: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("Content-Type", "application/json")
+
+	res, err := c.httpClient().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("oauth: post comment: %w", err)
+	}
+	defer res.Body.Close()
+	rawResp, _ := io.ReadAll(res.Body)
+	if res.StatusCode != http.StatusCreated {
+		return nil, fmt.Errorf("oauth: comment %d: %s", res.StatusCode, string(rawResp))
+	}
+	var cm Comment
+	if err := json.Unmarshal(rawResp, &cm); err != nil {
+		return nil, fmt.Errorf("oauth: parse comment resp: %w", err)
+	}
+	return &cm, nil
+}
