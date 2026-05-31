@@ -67,6 +67,38 @@ func (c *Client) PostPRComment(
 	return &cm, nil
 }
 
+// PostIssueComment PR 级别评论（非 inline）；slash command 的"已收到"ack 用
+// 文档 https://docs.github.com/rest/issues/comments#create-an-issue-comment
+// PR 在 GitHub 也算 Issue，所以这个 endpoint 适用 PR
+func (c *Client) PostIssueComment(ctx context.Context, accessToken, owner, repo string, issueNumber int, body string) (*Comment, error) {
+	payload := map[string]any{"body": body}
+	raw, _ := json.Marshal(payload)
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/%d/comments", owner, repo, issueNumber)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
+	if err != nil {
+		return nil, fmt.Errorf("oauth: build issue comment: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("Content-Type", "application/json")
+
+	res, err := c.httpClient().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("oauth: post issue comment: %w", err)
+	}
+	defer res.Body.Close()
+	rawResp, _ := io.ReadAll(res.Body)
+	if res.StatusCode != http.StatusCreated {
+		return nil, fmt.Errorf("oauth: issue comment %d: %s", res.StatusCode, string(rawResp))
+	}
+	var cm Comment
+	if err := json.Unmarshal(rawResp, &cm); err != nil {
+		return nil, fmt.Errorf("oauth: parse issue comment: %w", err)
+	}
+	return &cm, nil
+}
+
 // DeletePRComment 撤回一条 PR review comment（用户后悔点了 💬 评论 → 还能删）
 // 文档 https://docs.github.com/rest/pulls/comments#delete-a-review-comment-for-a-pull-request
 // 权限：comment 作者本人或 maintainer 才能删
