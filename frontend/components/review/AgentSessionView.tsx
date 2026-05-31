@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import {
   AlertTriangle,
@@ -456,12 +457,12 @@ function toolMeta(evt: ToolEvent): string {
   return `${len} chars`;
 }
 
-// ToolEventDetail 工具调用详情卡：参数 + 结果预览（result 长时截断）
+// ToolEventDetail 工具调用详情卡：参数 + 结果（markdown 渲染 + 可滚动）
+// remarkBreaks 把单换行保留为 <br>，避免 patch / grep 输出的逐行结构被 CommonMark 合并
+// 长结果用 max-h + overflow-y-auto 容纳完整内容，不再硬截断
 function ToolEventDetail({ evt }: { evt: ToolEvent }) {
   const argsPreview = evt.arguments?.slice(0, 200) ?? "";
   const result = evt.result ?? "";
-  const resultPreview = result.slice(0, 600);
-  const truncated = result.length > 600;
   return (
     <ToolCard
       label={
@@ -479,10 +480,11 @@ function ToolEventDetail({ evt }: { evt: ToolEvent }) {
       ) : evt.status === "error" ? (
         <p className="text-[11px] text-high">{result}</p>
       ) : (
-        <pre className="whitespace-pre-wrap text-[11px] leading-snug text-text-2">
-          {resultPreview}
-          {truncated ? `\n…（已截断 ${result.length - 600} 字）` : ""}
-        </pre>
+        <div className="max-h-[400px] overflow-y-auto pr-1 text-[11px] leading-snug text-text-2 [&_code]:rounded [&_code]:bg-surface-2 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[10.5px] [&_pre]:my-1.5 [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-surface-2 [&_pre]:p-2 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_h1]:mt-2 [&_h1]:text-xs [&_h1]:font-semibold [&_h2]:mt-2 [&_h2]:text-xs [&_h2]:font-semibold [&_h3]:mt-2 [&_h3]:text-[11px] [&_h3]:font-semibold [&_hr]:my-2 [&_hr]:border-border [&_li]:my-0.5 [&_p]:my-1 [&_strong]:font-medium [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-4">
+          <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+            {result}
+          </ReactMarkdown>
+        </div>
       )}
     </ToolCard>
   );
@@ -806,7 +808,7 @@ function LlmDetail({
         result={suggestionsDone ? `${suggestions.length} 条` : ""}
       />
       {summary ? (
-        <div className="mt-2 max-h-[180px] overflow-hidden border-t border-dashed border-border pt-2.5 text-sm leading-relaxed text-text-2 [&_code]:rounded [&_code]:bg-surface-2 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[11px] [&_h1]:mt-2 [&_h1]:text-[13px] [&_h1]:font-semibold [&_h2]:mt-2 [&_h2]:text-xs [&_h2]:font-semibold [&_h3]:mt-2 [&_h3]:text-xs [&_h3]:font-semibold [&_li]:my-0.5 [&_p]:my-1.5 [&_strong]:font-medium [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-4">
+        <div className="mt-2 max-h-[400px] overflow-y-auto border-t border-dashed border-border pt-2.5 pr-1 text-sm leading-relaxed text-text-2 [&_code]:rounded [&_code]:bg-surface-2 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[11px] [&_h1]:mt-2 [&_h1]:text-[13px] [&_h1]:font-semibold [&_h2]:mt-2 [&_h2]:text-xs [&_h2]:font-semibold [&_h3]:mt-2 [&_h3]:text-xs [&_h3]:font-semibold [&_li]:my-0.5 [&_p]:my-1.5 [&_strong]:font-medium [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-4">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{summary}</ReactMarkdown>
         </div>
       ) : null}
