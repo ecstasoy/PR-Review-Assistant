@@ -25,6 +25,8 @@ type Store interface {
 	Put(ctx context.Context, r *Record) error
 	List(ctx context.Context, userID *string, limit int) ([]*Record, error)
 	GetByID(ctx context.Context, id string) (*Record, error)
+	// Delete 按 ID 硬删；幂等（找不到不报错）
+	Delete(ctx context.Context, id string) error
 	// Ping 健康检查；ctx 带 timeout。SQLite 走 db.PingContext，Postgres 同理。
 	Ping(ctx context.Context) error
 }

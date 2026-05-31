@@ -98,6 +98,7 @@ export interface ReviewSummary {
   ci?: string;
   lang?: string; // PR 主语言（Go / TypeScript / Python / …）；后端按文件后缀多数派算
   source?: "manual" | "webhook"; // webhook 触发的自动评审；列表渲染 ⚡ chip
+  created_by?: string; // GitHub login；空 = 匿名遗留；前端用来 gate 删除按钮
   risk_counts?: { high: number; medium: number; low: number };
 }
 
