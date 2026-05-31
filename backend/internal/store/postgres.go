@@ -191,3 +191,12 @@ func scanPgRecordRows(rows *sql.Rows) (*Record, error) {
 	r.CreatedAt = time.Unix(0, ts).UTC()
 	return &r, nil
 }
+
+// Delete 按 ID 硬删；不存在不算错（幂等）
+func (s *PostgresStore) Delete(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, "DELETE FROM reviews WHERE id = $1", id)
+	if err != nil {
+		return fmt.Errorf("postgres delete: %w", err)
+	}
+	return nil
+}

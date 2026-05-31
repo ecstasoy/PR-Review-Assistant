@@ -2,10 +2,12 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ChevronRight, History } from "lucide-react";
+import { ChevronRight, History, Trash2 } from "lucide-react";
 
 import { listReviews } from "@/lib/api";
 import type { ReviewSummary } from "@/lib/types";
+import { useMe } from "@/lib/auth";
+import { deleteReview } from "@/lib/reviews";
 import { CIStatus } from "@/components/ui/ci-status";
 import { RiskPips } from "./RiskPips";
 
@@ -23,6 +25,8 @@ const ZERO_COUNTS = { high: 0, medium: 0, low: 0 };
 export function RecentReviewsList() {
   const [items, setItems] = useState<SummaryWithCounts[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [nonce, setNonce] = useState(0); // 删除后 ++ 触发重拉
+  const { me } = useMe();
 
   useEffect(() => {
     let cancelled = false;
@@ -36,7 +40,19 @@ export function RecentReviewsList() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [nonce]);
+
+  async function handleDelete(id: string, label: string) {
+    if (!window.confirm(`确定删除评审「${label}」？操作不可撤销。`)) return;
+    try {
+      await deleteReview(id);
+      setNonce((n) => n + 1);
+    } catch (e) {
+      window.alert("删除失败：" + (e instanceof Error ? e.message : String(e)));
+    }
+  }
+
+  const myLogin = me?.authenticated ? me.login : undefined;
 
   return (
     <section className="mt-11">
@@ -52,7 +68,7 @@ export function RecentReviewsList() {
       </div>
 
       <div className="overflow-hidden rounded-lg border border-border bg-surface">
-        <ListBody items={items} error={error} />
+        <ListBody items={items} error={error} myLogin={myLogin} onDelete={handleDelete} />
       </div>
     </section>
   );
@@ -61,9 +77,13 @@ export function RecentReviewsList() {
 function ListBody({
   items,
   error,
+  myLogin,
+  onDelete,
 }: {
   items: SummaryWithCounts[] | null;
   error: string | null;
+  myLogin?: string;
+  onDelete: (id: string, label: string) => void;
 }) {
   if (error) {
     return <EmptyText>加载失败：{error}</EmptyText>;
@@ -77,40 +97,78 @@ function ListBody({
   return (
     <>
       {items.map((item, i) => (
-        <RecentRow key={item.id} item={item} isFirst={i === 0} />
+        <RecentRow
+          key={item.id}
+          item={item}
+          isFirst={i === 0}
+          myLogin={myLogin}
+          onDelete={onDelete}
+        />
       ))}
     </>
   );
 }
 
-function RecentRow({ item, isFirst }: { item: SummaryWithCounts; isFirst: boolean }) {
+function RecentRow({
+  item,
+  isFirst,
+  myLogin,
+  onDelete,
+}: {
+  item: SummaryWithCounts;
+  isFirst: boolean;
+  myLogin?: string;
+  onDelete: (id: string, label: string) => void;
+}) {
+  // 删除按钮可见性：已登录 + (我是 owner OR 匿名遗留)
+  // 匿名遗留（created_by 空）兼容 v1 旧记录，任何登录用户都能清
+  const canDelete = !!myLogin && (!item.created_by || item.created_by === myLogin);
   return (
-    <Link
-      href={`/review/${item.id}`}
-      className={`flex items-center gap-3 px-3.5 py-2.5 transition-colors hover:bg-surface-hover ${
+    <div
+      className={`group relative flex items-center transition-colors hover:bg-surface-hover ${
         isFirst ? "" : "border-t border-border"
       }`}
     >
-      <CIStatus status={item.ci || "pending"} />
-      <code className="shrink-0 font-mono text-xs text-text-2">
-        {item.owner}/{item.repo}#{item.pr}
-      </code>
-      <span className="flex-1 truncate text-sm text-text">
-        {item.title || "(未命名)"}
-      </span>
-      {item.source === "webhook" ? (
-        <span
-          className="inline-flex h-[18px] shrink-0 items-center gap-0.5 rounded-full bg-accent-soft px-1.5 text-[10px] font-medium text-accent"
-          title="GitHub 推 PR webhook 自动触发"
-        >
-          ⚡ 自动
+      <Link
+        href={`/review/${item.id}`}
+        className="flex flex-1 items-center gap-3 px-3.5 py-2.5"
+      >
+        <CIStatus status={item.ci || "pending"} />
+        <code className="shrink-0 font-mono text-xs text-text-2">
+          {item.owner}/{item.repo}#{item.pr}
+        </code>
+        <span className="flex-1 truncate text-sm text-text">
+          {item.title || "(未命名)"}
         </span>
+        {item.source === "webhook" ? (
+          <span
+            className="inline-flex h-[18px] shrink-0 items-center gap-0.5 rounded-full bg-accent-soft px-1.5 text-[10px] font-medium text-accent"
+            title="GitHub 推 PR webhook 自动触发"
+          >
+            ⚡ 自动
+          </span>
+        ) : null}
+        <RiskPips counts={item.risk_counts ?? ZERO_COUNTS} />
+        <span className="w-14 shrink-0 text-right text-xs text-faint">
+          {formatRelative(item.created_at)}
+        </span>
+      </Link>
+      {canDelete ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onDelete(item.id, `${item.owner}/${item.repo}#${item.pr}`);
+          }}
+          title={item.created_by ? "删除你创建的评审" : "删除匿名遗留记录"}
+          className="mr-2 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted opacity-0 transition-opacity hover:bg-high-bg hover:text-high group-hover:opacity-100"
+          aria-label="删除评审"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
       ) : null}
-      <RiskPips counts={item.risk_counts ?? ZERO_COUNTS} />
-      <span className="w-14 shrink-0 text-right text-xs text-faint">
-        {formatRelative(item.created_at)}
-      </span>
-    </Link>
+    </div>
   );
 }
 

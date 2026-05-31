@@ -2,11 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { History as HistoryIcon, Search } from "lucide-react";
+import { History as HistoryIcon, Search, Trash2 } from "lucide-react";
 
 import { listReviews } from "@/lib/api";
 import type { ReviewSummary } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { useMe } from "@/lib/auth";
+import { deleteReview } from "@/lib/reviews";
 import { CIStatus, type CIStatusValue } from "@/components/ui/ci-status";
 import { RiskPips } from "@/components/landing/RiskPips";
 
@@ -21,6 +23,9 @@ export default function HistoryPage() {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [lang, setLang] = useState<string>("all");
+  const [nonce, setNonce] = useState(0);
+  const { me } = useMe();
+  const myLogin = me?.authenticated ? me.login : undefined;
 
   useEffect(() => {
     let cancelled = false;
@@ -35,7 +40,17 @@ export default function HistoryPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [nonce]);
+
+  async function handleDelete(id: string, label: string) {
+    if (!window.confirm(`确定删除评审「${label}」？操作不可撤销。`)) return;
+    try {
+      await deleteReview(id);
+      setNonce((n) => n + 1);
+    } catch (e) {
+      window.alert("删除失败：" + (e instanceof Error ? e.message : String(e)));
+    }
+  }
 
   // langs 段控值 = ["all", ...当前结果集所有非空 lang 去重]
   const langs = useMemo<string[]>(() => {
@@ -102,7 +117,7 @@ export default function HistoryPage() {
 
       <div className="overflow-hidden rounded-lg border border-border bg-surface">
         <HeaderRow />
-        <TableBody rows={rows} items={items} error={error} />
+        <TableBody rows={rows} items={items} error={error} myLogin={myLogin} onDelete={handleDelete} />
       </div>
     </section>
   );
@@ -133,10 +148,14 @@ function TableBody({
   rows,
   items,
   error,
+  myLogin,
+  onDelete,
 }: {
   rows: ReviewSummary[];
   items: ReviewSummary[] | null;
   error: string | null;
+  myLogin?: string;
+  onDelete: (id: string, label: string) => void;
 }) {
   if (error) {
     return <p className="px-4 py-6 text-center text-sm text-fail">加载失败：{error}</p>;
@@ -157,32 +176,71 @@ function TableBody({
   return (
     <>
       {rows.map((r, i) => (
-        <Row key={r.id} review={r} isFirst={i === 0} />
+        <Row
+          key={r.id}
+          review={r}
+          isFirst={i === 0}
+          myLogin={myLogin}
+          onDelete={onDelete}
+        />
       ))}
     </>
   );
 }
 
-function Row({ review, isFirst }: { review: ReviewSummary; isFirst: boolean }) {
+function Row({
+  review,
+  isFirst,
+  myLogin,
+  onDelete,
+}: {
+  review: ReviewSummary;
+  isFirst: boolean;
+  myLogin?: string;
+  onDelete: (id: string, label: string) => void;
+}) {
+  // 删除按钮可见性：已登录 + （我是 owner OR 匿名遗留）
+  const canDelete = !!myLogin && (!review.created_by || review.created_by === myLogin);
   return (
-    <Link
-      href={`/review/${review.id}`}
+    <div
       className={cn(
-        "grid items-center gap-3 px-4 py-3 transition-colors hover:bg-surface-hover",
-        GRID_COLS,
+        "group relative flex items-center transition-colors hover:bg-surface-hover",
         isFirst ? "" : "border-t border-border",
       )}
     >
-      <CIStatus status={(review.ci ?? "pending") as CIStatusValue} />
-      <code className="truncate font-mono text-xs text-text-2">
-        {review.owner}/{review.repo}
-        <span className="text-faint">#{review.pr}</span>
-      </code>
-      <span className="truncate text-sm">{review.title || "(未命名)"}</span>
-      <RiskPips counts={review.risk_counts ?? ZERO_COUNTS} />
-      <code className="font-mono text-xs text-faint">{review.head_sha.slice(0, 7)}</code>
-      <span className="text-right text-xs text-faint">{formatRelative(review.created_at)}</span>
-    </Link>
+      <Link
+        href={`/review/${review.id}`}
+        className={cn(
+          "grid flex-1 items-center gap-3 px-4 py-3",
+          GRID_COLS,
+        )}
+      >
+        <CIStatus status={(review.ci ?? "pending") as CIStatusValue} />
+        <code className="truncate font-mono text-xs text-text-2">
+          {review.owner}/{review.repo}
+          <span className="text-faint">#{review.pr}</span>
+        </code>
+        <span className="truncate text-sm">{review.title || "(未命名)"}</span>
+        <RiskPips counts={review.risk_counts ?? ZERO_COUNTS} />
+        <code className="font-mono text-xs text-faint">{review.head_sha.slice(0, 7)}</code>
+        <span className="text-right text-xs text-faint">{formatRelative(review.created_at)}</span>
+      </Link>
+      {canDelete ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onDelete(review.id, `${review.owner}/${review.repo}#${review.pr}`);
+          }}
+          title={review.created_by ? "删除你创建的评审" : "删除匿名遗留记录"}
+          className="mr-2 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted opacity-0 transition-opacity hover:bg-high-bg hover:text-high group-hover:opacity-100"
+          aria-label="删除评审"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      ) : null}
+    </div>
   );
 }
 

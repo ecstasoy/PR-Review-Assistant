@@ -23,6 +23,9 @@ func (s failPingStore) List(ctx context.Context, userID *string, limit int) ([]*
 func (s failPingStore) GetByID(ctx context.Context, id string) (*store.Record, error) {
 	return s.inner.GetByID(ctx, id)
 }
+func (s failPingStore) Delete(ctx context.Context, id string) error {
+	return s.inner.Delete(ctx, id)
+}
 func (s failPingStore) Ping(ctx context.Context) error { return errors.New("synthetic failure") }
 
 func TestHealth_LivenessAlwaysOK(t *testing.T) {

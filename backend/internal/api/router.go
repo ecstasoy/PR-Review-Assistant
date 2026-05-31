@@ -60,6 +60,7 @@ func registerRoutes(r *gin.Engine, d Deps, webhookSecret string) {
 	g.POST("/review", expensive, PostReview(d))
 	g.GET("/reviews", read, ListReviews(d))
 	g.GET("/reviews/:id", read, GetReview(d))
+	g.DELETE("/reviews/:id", read, DeleteReview(d))
 	g.POST("/review/:id/steer", expensive, PostSteer(d))
 
 	// OAuth：登录 / 回调 / 登出 + 当前用户信息

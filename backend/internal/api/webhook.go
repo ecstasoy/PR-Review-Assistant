@@ -422,7 +422,9 @@ func runWebhookReview(d Deps, args webhookReviewArgs) {
 
 	var reviewID string
 	if d.Store != nil {
-		reviewID = persistReview(d.Store, pr, summaryBuf.String(), risksData, suggestionsData, budget, "webhook")
+		// webhook 创建的 review owner = PR 作者（无登录上下文，按 PR meta 归属）
+		// 这样 PR 作者登录 lgtm.com 时能看到 + 删除自己仓库的自动评审
+		reviewID = persistReview(d.Store, pr, summaryBuf.String(), risksData, suggestionsData, budget, "webhook", args.PRAuthorLogin)
 	}
 
 	// Push bot review 回 PR（用 installation token）

@@ -1,16 +1,48 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
 	gh "github.com/ecstasoy/PR-Review-Assistant/backend/internal/github"
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/store"
 )
+
+// mergeRecordsByTimeDesc 合并两批 records 按 CreatedAt DESC，截前 limit 条
+// 用于已登录用户的 list：mine + public 并集，时间序，避免 duplicates（理论不会同 ID 不同来源）
+func mergeRecordsByTimeDesc(a, b []*store.Record, limit int) []*store.Record {
+	merged := make([]*store.Record, 0, len(a)+len(b))
+	seen := make(map[string]bool, len(a)+len(b))
+	for _, r := range a {
+		if !seen[r.ID] {
+			seen[r.ID] = true
+			merged = append(merged, r)
+		}
+	}
+	for _, r := range b {
+		if !seen[r.ID] {
+			seen[r.ID] = true
+			merged = append(merged, r)
+		}
+	}
+	sort.Slice(merged, func(i, j int) bool {
+		return merged[i].CreatedAt.After(merged[j].CreatedAt)
+	})
+	if len(merged) > limit {
+		merged = merged[:limit]
+	}
+	return merged
+}
+
+// 防 context 包 import 报未用：mergeRecordsByTimeDesc 不直接用，但 ListReviews 用 ctx
+var _ = context.Background
 
 const (
 	defaultListLimit = 20
@@ -37,6 +69,7 @@ type reviewListItem struct {
 	CI         string     `json:"ci,omitempty"`
 	Lang       string     `json:"lang,omitempty"` // PR 主语言（detectPrimaryLang 的结果）；/history 语言筛选用
 	Source     string     `json:"source,omitempty"` // "manual" / "webhook"；前端按此渲染 ⚡ chip
+	CreatedBy  string     `json:"created_by,omitempty"` // GitHub login；空 = 匿名遗留；前端用来 gate 删除按钮
 	RiskCounts riskCounts `json:"risk_counts"`
 }
 
@@ -88,6 +121,9 @@ func countRisksBySeverity(raw json.RawMessage) riskCounts {
 
 // ListReviews GET /api/reviews?limit=N — 历史评审列表，按 created_at DESC。
 // 未配 Store 时返 503 而非 200 空列表，让前端能区分"没有历史"和"功能未启用"。
+// 可见性：
+//   - 匿名访客 → 返 user_id IS NULL 的（v1 遗留公开记录）
+//   - 已登录用户 → 返自己创建的 + 匿名遗留；他人创建的不返
 func ListReviews(d Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if d.Store == nil {
@@ -95,11 +131,24 @@ func ListReviews(d Deps) gin.HandlerFunc {
 			return
 		}
 		limit := parseLimit(c.Query("limit"))
-		records, err := d.Store.List(c.Request.Context(), nil, limit)
+		ctx := c.Request.Context()
+
+		// 先拿匿名遗留（user_id IS NULL）
+		pub, err := d.Store.List(ctx, nil, limit)
 		if err != nil {
-			slog.Error("list reviews", "err", err)
+			slog.Error("list reviews (public)", "err", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
+		}
+		records := pub
+		// 登录用户：再拿自己的
+		if s := CurrentSession(c); s != nil {
+			mine, err := d.Store.List(ctx, &s.Login, limit)
+			if err != nil {
+				slog.Warn("list reviews (mine) failed; returning public only", "err", err)
+			} else {
+				records = mergeRecordsByTimeDesc(mine, pub, limit)
+			}
 		}
 		out := make([]reviewListItem, 0, len(records))
 		for _, r := range records {
@@ -110,6 +159,9 @@ func ListReviews(d Deps) gin.HandlerFunc {
 				PR:        r.PRNumber,
 				HeadSHA:   r.HeadSHA,
 				CreatedAt: r.CreatedAt.UTC().Format(time.RFC3339),
+			}
+			if r.UserID != nil {
+				it.CreatedBy = *r.UserID
 			}
 			// title / ci / risks 计数从 payload 解出；解析失败保留零值（旧缓存兼容）
 			var p cachedPayload
@@ -123,6 +175,47 @@ func ListReviews(d Deps) gin.HandlerFunc {
 			out = append(out, it)
 		}
 		c.JSON(http.StatusOK, out)
+	}
+}
+
+// DeleteReview DELETE /api/reviews/:id — 删一条评审记录
+// 权限：
+//   - 必须已登录
+//   - record.UserID == nil（匿名遗留）→ 任何登录用户能删（兼容 v1）
+//   - record.UserID 非空 → 只有 owner 自己能删
+//
+// 不级联删 RAG chunks（chunks 按 owner/repo 共享，删 review 不该影响别的）
+func DeleteReview(d Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if d.Store == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "history disabled"})
+			return
+		}
+		s := CurrentSession(c)
+		if s == nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "请先登录"})
+			return
+		}
+		id := c.Param("id")
+		rec, err := d.Store.GetByID(c.Request.Context(), id)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if rec == nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "review not found"})
+			return
+		}
+		// 非匿名遗留 → 只 owner 能删
+		if rec.UserID != nil && *rec.UserID != s.Login {
+			c.JSON(http.StatusForbidden, gin.H{"error": "只能删除你创建的评审"})
+			return
+		}
+		if err := d.Store.Delete(c.Request.Context(), id); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"ok": true})
 	}
 }
 
@@ -150,6 +243,19 @@ func GetReview(d Deps) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "corrupted cache payload"})
 			return
 		}
+		// 可见性校验：匿名遗留（UserID==nil）任何人都能看；UserID 非空只有 owner 看
+		// 防 URL 猜 ID 偷看别人的私密 review
+		if rec.UserID != nil {
+			sess := CurrentSession(c)
+			if sess == nil || sess.Login != *rec.UserID {
+				c.JSON(http.StatusNotFound, gin.H{"error": "review not found"})
+				return
+			}
+		}
+		createdBy := ""
+		if rec.UserID != nil {
+			createdBy = *rec.UserID
+		}
 		c.JSON(http.StatusOK, reviewDetail{
 			reviewListItem: reviewListItem{
 				ID:         rec.ID,
@@ -162,6 +268,7 @@ func GetReview(d Deps) gin.HandlerFunc {
 				CI:         p.CI,
 				Lang:       p.Lang,
 				Source:     p.Source,
+				CreatedBy:  createdBy,
 				RiskCounts: countRisksBySeverity(p.Risks),
 			},
 			Files:        p.Files,

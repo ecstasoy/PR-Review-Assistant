@@ -93,6 +93,21 @@ func indexPRChunks(ctx context.Context, idx index.Indexer, pr gh.PullRequest) {
 // 成功后切到 text/event-stream，按帧推送各 stage 事件。
 func PostReview(d Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// 登录 gate：要求 OAuth 登录才能 evaluate；防止匿名滥用 LLM cost / 让 review 有 owner
+		// 仅 OAuth 已配置（d.Sessions 非 nil）时启用；未配 fallback 老 anonymous 行为
+		var creatorLogin string
+		if d.Sessions != nil {
+			s := CurrentSession(c)
+			if s == nil {
+				c.JSON(http.StatusUnauthorized, gin.H{
+					"error":     "请先 GitHub 登录后再提交评审",
+					"login_url": "/api/auth/github/login",
+				})
+				return
+			}
+			creatorLogin = s.Login
+		}
+
 		var body struct {
 			URL string `json:"url"`
 		}
@@ -206,7 +221,7 @@ func PostReview(d Deps) gin.HandlerFunc {
 			case ev, ok := <-merged:
 				if !ok {
 					if d.Store != nil && !stageErrObserved && risksData != nil && suggestionsData != nil {
-						if id := persistReview(d.Store, pr, summaryBuf.String(), risksData, suggestionsData, budget, "manual"); id != "" {
+						if id := persistReview(d.Store, pr, summaryBuf.String(), risksData, suggestionsData, budget, "manual", creatorLogin); id != "" {
 							// 让流式页前端拿到 ULID 启用「💬 评论 / ✅ 提交 / SteerComposer 追问」按钮
 							// （没这帧前端只能等用户回首页点列表条目）
 							raw, _ := json.Marshal(map[string]string{"id": id})
@@ -291,7 +306,8 @@ func prMetaPayload(pr gh.PullRequest, sourceURL string) map[string]any {
 // 用 context.Background() 与请求生命周期解耦：写缓存时客户端可能已断开。
 // 返 ID 让 caller emit SSE review_id 帧（前端在流式页面拿到 ULID 后启用 adopt 按钮 / SteerComposer）
 // source 标记触发来源："manual"（用户粘 URL）/"webhook"（GitHub 推 PR 自动评）
-func persistReview(s store.Store, pr gh.PullRequest, summary string, risks, suggestions json.RawMessage, budget *budgetReportPayload, source string) string {
+// createdByLogin GitHub login（manual=当前登录用户，webhook=PR 作者）；空串 = 匿名（旧记录）
+func persistReview(s store.Store, pr gh.PullRequest, summary string, risks, suggestions json.RawMessage, budget *budgetReportPayload, source string, createdByLogin string) string {
 	if source == "" {
 		source = "manual"
 	}
@@ -326,6 +342,11 @@ func persistReview(s store.Store, pr gh.PullRequest, summary string, risks, sugg
 		PRNumber: pr.Number,
 		HeadSHA:  pr.HeadSHA,
 		Payload:  payload,
+	}
+	// UserID 非空字符串 → 真 owner（per-user 可见性 + delete 时校验）
+	// 空 → 匿名遗留（任何登录用户都能删，兼容 v1 旧记录）
+	if createdByLogin != "" {
+		rec.UserID = &createdByLogin
 	}
 	if err := s.Put(context.Background(), rec); err != nil {
 		slog.Error("cache put", "err", err, "owner", pr.Owner, "repo", pr.Repo, "pr", pr.Number)
