@@ -98,6 +98,14 @@ function RecentRow({ item, isFirst }: { item: SummaryWithCounts; isFirst: boolea
       <span className="flex-1 truncate text-sm text-text">
         {item.title || "(未命名)"}
       </span>
+      {item.source === "webhook" ? (
+        <span
+          className="inline-flex h-[18px] shrink-0 items-center gap-0.5 rounded-full bg-accent-soft px-1.5 text-[10px] font-medium text-accent"
+          title="GitHub 推 PR webhook 自动触发"
+        >
+          ⚡ 自动
+        </span>
+      ) : null}
       <RiskPips counts={item.risk_counts ?? ZERO_COUNTS} />
       <span className="w-14 shrink-0 text-right text-xs text-faint">
         {formatRelative(item.created_at)}

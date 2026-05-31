@@ -206,7 +206,7 @@ func PostReview(d Deps) gin.HandlerFunc {
 			case ev, ok := <-merged:
 				if !ok {
 					if d.Store != nil && !stageErrObserved && risksData != nil && suggestionsData != nil {
-						if id := persistReview(d.Store, pr, summaryBuf.String(), risksData, suggestionsData, budget); id != "" {
+						if id := persistReview(d.Store, pr, summaryBuf.String(), risksData, suggestionsData, budget, "manual"); id != "" {
 							// 让流式页前端拿到 ULID 启用「💬 评论 / ✅ 提交 / SteerComposer 追问」按钮
 							// （没这帧前端只能等用户回首页点列表条目）
 							raw, _ := json.Marshal(map[string]string{"id": id})
@@ -290,9 +290,14 @@ func prMetaPayload(pr gh.PullRequest, sourceURL string) map[string]any {
 // persistReview 把本次评审序列化后写入 store；缓存写失败仅记日志，不影响响应。
 // 用 context.Background() 与请求生命周期解耦：写缓存时客户端可能已断开。
 // 返 ID 让 caller emit SSE review_id 帧（前端在流式页面拿到 ULID 后启用 adopt 按钮 / SteerComposer）
-func persistReview(s store.Store, pr gh.PullRequest, summary string, risks, suggestions json.RawMessage, budget *budgetReportPayload) string {
+// source 标记触发来源："manual"（用户粘 URL）/"webhook"（GitHub 推 PR 自动评）
+func persistReview(s store.Store, pr gh.PullRequest, summary string, risks, suggestions json.RawMessage, budget *budgetReportPayload, source string) string {
+	if source == "" {
+		source = "manual"
+	}
 	payload, err := json.Marshal(cachedPayload{
 		Title:        pr.Title,
+		Source:       source,
 		Files:        pr.Files,
 		Author:       pr.Author,
 		AuthorRole:   pr.AuthorRole,

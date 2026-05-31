@@ -71,6 +71,9 @@ export interface PrMeta {
   stats?: Stats;
   ci?: "passing" | "failing" | "pending" | string;
   checks?: Check[];
+  // source 仅 detail 端点会返；前端用来在顶栏渲染 ⚡ 自动 chip
+  // streaming 期间 onPr 不带，所以 optional
+  source?: "manual" | "webhook";
 }
 
 // BudgetReport 三层上下文 token 预算实际分配；后端 prctx.LayeredBuilder 输出 + SSE budget_report 帧 + detail.budget_report 同形状
@@ -94,10 +97,12 @@ export interface ReviewSummary {
   created_at: string; // RFC3339（评审记录创建时间）
   ci?: string;
   lang?: string; // PR 主语言（Go / TypeScript / Python / …）；后端按文件后缀多数派算
+  source?: "manual" | "webhook"; // webhook 触发的自动评审；列表渲染 ⚡ chip
   risk_counts?: { high: number; medium: number; low: number };
 }
 
 // ReviewDetail /api/reviews/:id 详情；inline 缓存 payload + 全套 PR meta
+// 注意：source 通过 ReviewSummary 继承；前端可直接 detail.source 读
 export interface ReviewDetail extends ReviewSummary {
   // PR meta（A1+A2+A3+author_role+lang）
   author?: string;

@@ -34,8 +34,18 @@ type Deps struct {
 	Sessions    *session.Manager
 }
 
-// Register 挂载 /api 路由组。
+// RegisterWithSecret 同 Register 但接受 webhook secret 显式注入
+// （webhook 验签必须的；webhook secret 是 fly secret 不该塞 Deps 暴露给所有 handler）
+func RegisterWithSecret(r *gin.Engine, d Deps, webhookSecret string) {
+	registerRoutes(r, d, webhookSecret)
+}
+
+// Register 兼容老 caller；webhook 验签会 fail-secure 拒绝（避免无 secret 时被滥用）
 func Register(r *gin.Engine, d Deps) {
+	registerRoutes(r, d, "")
+}
+
+func registerRoutes(r *gin.Engine, d Deps, webhookSecret string) {
 	g := r.Group("/api")
 	g.Use(middleware.AuthCtx(d.Sessions))
 
@@ -70,4 +80,11 @@ func Register(r *gin.Engine, d Deps) {
 
 	// 撤回 comment：cid = GitHub PR review comment databaseId（不是 review idx）
 	g.DELETE("/review/:id/comment/:cid", read, DeleteAdoptComment(d))
+
+	// Webhook：GitHub 推 pull_request.opened → bot 自动评 + 写回 PR + push 通知
+	// 不走 read 限流；GitHub 重试机制本身有节流；HMAC 校验防伪造
+	g.POST("/webhook/github", WebhookGitHub(d, webhookSecret))
+
+	// In-app 通知：webhook 完成后填用户 cache 列表；前端轮询拉
+	g.GET("/notifications", read, GetNotificationsHandler(d.Cache))
 }

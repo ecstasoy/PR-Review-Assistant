@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 
 import "./globals.css";
 import { ThemeScript } from "@/components/theme-script";
+import { ToastContainer } from "@/components/ui/Toast";
 
 // next/font 注入 CSS 变量；globals.css 的 --font-sans / --font-mono 引用这两个
 const geistSans = Geist({
@@ -46,7 +47,11 @@ export default function RootLayout({
       <head>
         <ThemeScript />
       </head>
-      <body className={`${geistSans.variable} ${geistMono.variable}`}>{children}</body>
+      <body className={`${geistSans.variable} ${geistMono.variable}`}>
+        {children}
+        {/* 全局 webhook 自动评通知 toast；任何页都能看到右下角弹窗 */}
+        <ToastContainer />
+      </body>
     </html>
   );
 }
