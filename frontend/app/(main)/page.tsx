@@ -3,8 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { CapabilityCards } from "@/components/landing/CapabilityCards";
 import { HeroBanner } from "@/components/landing/HeroBanner";
+import { HowItWorks } from "@/components/landing/HowItWorks";
 import { RecentReviewsList } from "@/components/landing/RecentReviewsList";
 import { UrlInputCard } from "@/components/landing/UrlInputCard";
 import { LoginGateBanner } from "@/components/landing/LoginGateBanner";
@@ -33,8 +33,8 @@ export default function HomePage() {
       ) : (
         <LoginGateBanner />
       )}
-      <CapabilityCards />
       <RecentReviewsList />
+      <HowItWorks />
     </section>
   );
 }

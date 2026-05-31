@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   AlertTriangle,
   AlignLeft,
@@ -40,6 +42,10 @@ interface SteerEntry {
   status: "running" | "done" | "error";
   resultCount?: number;
   error?: string;
+  // agent 模式：后端发的「Agent 完成（N 步）：...」最终回复正文 + 步数
+  // 之前路由到页面顶部 InfoBanner，太远离 timeline；现在挂在 entry 上让 SteerDetail 内联渲染 markdown
+  agentResponse?: string;
+  agentSteps?: number;
 }
 
 interface Props {
@@ -195,7 +201,27 @@ export function AgentSessionView({
             },
             onToolCallStart: (call) => onSteerToolCallStart?.(call),
             onToolCallDone: (call) => onSteerToolCallDone?.(call),
-            onInfo: (message) => onSteerInfo?.(message),
+            onInfo: (message) => {
+              // agent 路径 backend 发两条 info：「Agent 启动...」+「Agent 完成（N 步）：BODY」
+              // 都挂到当前 entry 上，不要污染页面顶部 InfoBanner（远离 timeline 失去上下文）
+              const finishMatch = message.match(/^Agent 完成（(\d+) 步）：(.*)$/s);
+              if (finishMatch) {
+                const steps = parseInt(finishMatch[1], 10);
+                const body = finishMatch[2].trim();
+                setSteerHistory((prev) =>
+                  prev.map((e) =>
+                    e.id === id ? { ...e, agentResponse: body, agentSteps: steps } : e,
+                  ),
+                );
+                return;
+              }
+              if (message.startsWith("Agent 启动")) {
+                // 启动信息已经被 running 状态隐含；丢弃避免重复显示
+                return;
+              }
+              // 其它 info（如「评审保存中…」/ "stage error" 提示）保留页面级 InfoBanner 路径
+              onSteerInfo?.(message);
+            },
             onStageError: (_s, msg) => markError(msg),
           },
           undefined,
@@ -380,6 +406,10 @@ function steerMeta(entry: SteerEntry): string {
   return `${label} · ${entry.resultCount ?? 0} 项`;
 }
 
+// agentReplyProse 跟 page.tsx InfoBanner 同款紧凑 markdown 排版
+const agentReplyProse =
+  "[&_p]:my-1.5 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_ul]:my-1.5 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-1.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-0.5 [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h1]:text-base [&_h1]:font-semibold [&_h2]:mt-3 [&_h2]:mb-1.5 [&_h2]:text-sm [&_h2]:font-semibold [&_h3]:mt-2 [&_h3]:mb-1 [&_h3]:text-[13px] [&_h3]:font-semibold [&_code]:rounded [&_code]:bg-surface-2 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[12px] [&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-surface-2 [&_pre]:p-2 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_strong]:font-semibold [&_strong]:text-text";
+
 function SteerDetail({ entry }: { entry: SteerEntry }) {
   return (
     <ToolCard
@@ -395,10 +425,21 @@ function SteerDetail({ entry }: { entry: SteerEntry }) {
       {entry.status === "error" && entry.error ? (
         <p className="mt-2 text-[10.5px] text-high">引导失败：{entry.error}</p>
       ) : null}
-      {entry.status === "done" ? (
+      {/* agent 模式：渲染最终 reply markdown 在卡片内（之前飘在页面顶部远离 timeline）*/}
+      {entry.mode === "agent" && entry.agentResponse ? (
+        <div className="mt-3 rounded-md border border-border bg-surface p-3">
+          <div className="mb-2 text-[10.5px] font-medium text-muted">
+            Agent 回复{entry.agentSteps ? ` · ${entry.agentSteps} 步` : ""}
+          </div>
+          <div className={`text-sm text-text ${agentReplyProse}`}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{entry.agentResponse}</ReactMarkdown>
+          </div>
+        </div>
+      ) : null}
+      {entry.status === "done" && !(entry.mode === "agent" && entry.agentResponse) ? (
         <p className="mt-2 text-[10.5px] text-faint">
           {entry.mode === "agent"
-            ? "Agent 深挖已完成 · 详情见上方工具调用时间线与提示信息"
+            ? "Agent 深挖已完成 · 详情见上方工具调用时间线"
             : `已替换 ${entry.stage === "risks" ? "风险" : "建议"} 列表 · 共 ${entry.resultCount ?? 0} 项`}
         </p>
       ) : null}
