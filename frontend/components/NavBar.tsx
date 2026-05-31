@@ -10,7 +10,7 @@ import { ThemeToggle } from "./theme-toggle";
 import { UserMenu } from "./auth/UserMenu";
 
 // NavBar 顶栏：左侧 LGTM BrandMark（图标 + lgtm 字标 + 闪烁光标）→ ghost button 导航
-// → mock-provider pill → 主题切换。
+// → 右侧用户菜单 + 主题切换。
 export function NavBar() {
   const pathname = usePathname();
   const isReview = pathname === "/" || pathname.startsWith("/review");
@@ -31,11 +31,10 @@ export function NavBar() {
         </NavLink>
       </nav>
 
-      <span className="ml-auto rounded-full border border-border px-2.5 py-[3px] font-mono text-[10.5px] text-faint">
-        mock provider
-      </span>
-      <UserMenu />
-      <ThemeToggle />
+      <div className="ml-auto flex items-center gap-2">
+        <UserMenu />
+        <ThemeToggle />
+      </div>
     </header>
   );
 }

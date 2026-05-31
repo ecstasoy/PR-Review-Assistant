@@ -37,9 +37,8 @@ export default function HomePage() {
 
       {/* 简介：评审任何 PR 不需要装 App；想直接发回 GitHub 才装 */}
       <p className="mt-10 max-w-[640px] text-sm leading-[1.7] text-text-2">
-        登录后即可对任意 public PR 评审；如果想把 LGTM 给出的修改建议
-        <strong className="font-medium text-text"> 一键发回 GitHub PR 评论 / 提交 commit</strong>
-        ，需要给对应 repo 安装{" "}
+        登录后即可对任意公开仓库的 PR 进行评审；如果想把 LGTM 给出的修改建议一键发回 GitHub PR
+        评论 / 提交 commit，需要给对应 repo 安装{" "}
         <a
           href="https://github.com/apps/lgtm-ai-reviewer"
           target="_blank"
@@ -48,8 +47,7 @@ export default function HomePage() {
         >
           LGTM App
         </a>
-        （只读 diff + 写 PR 评论权限）。装完还能享受 webhook 自动评：开 PR / push 新 commit
-        bot 30 秒内自动回贴评审。
+        。LGTM bot 还可在 GitHub 的 PR 页面进行自动评审。
       </p>
     </section>
   );

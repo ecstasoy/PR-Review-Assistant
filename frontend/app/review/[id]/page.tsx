@@ -320,6 +320,7 @@ function ReviewDetailPageContent({ id }: { id: string }) {
                 risksDone={risksDone}
                 streaming={streaming}
                 stageErrors={stageErrors}
+                onPickRisk={pickRisk}
               />
             ) : view === "diff" ? (
               <DiffView
@@ -417,6 +418,7 @@ function ReportContent({
   risksDone,
   streaming,
   stageErrors,
+  onPickRisk,
 }: {
   summary: string;
   summaryDone: boolean;
@@ -424,6 +426,7 @@ function ReportContent({
   risksDone: boolean;
   streaming: boolean;
   stageErrors: StageErrors;
+  onPickRisk: (r: Risk) => void;
 }) {
   return (
     <>
@@ -435,7 +438,7 @@ function ReportContent({
       {stageErrors.risks ? (
         <StageErrorBanner stage="风险" message={stageErrors.risks} />
       ) : risks.length > 0 ? (
-        <RisksList risks={risks} />
+        <RisksList risks={risks} onPickRisk={onPickRisk} />
       ) : risksDone ? (
         <p className="text-sm text-muted">未发现风险。</p>
       ) : streaming ? (
