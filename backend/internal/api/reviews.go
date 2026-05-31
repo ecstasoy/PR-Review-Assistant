@@ -1,11 +1,9 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"sort"
 	"strconv"
 	"time"
 
@@ -14,35 +12,6 @@ import (
 	gh "github.com/ecstasoy/PR-Review-Assistant/backend/internal/github"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/store"
 )
-
-// mergeRecordsByTimeDesc 合并两批 records 按 CreatedAt DESC，截前 limit 条
-// 用于已登录用户的 list：mine + public 并集，时间序，避免 duplicates（理论不会同 ID 不同来源）
-func mergeRecordsByTimeDesc(a, b []*store.Record, limit int) []*store.Record {
-	merged := make([]*store.Record, 0, len(a)+len(b))
-	seen := make(map[string]bool, len(a)+len(b))
-	for _, r := range a {
-		if !seen[r.ID] {
-			seen[r.ID] = true
-			merged = append(merged, r)
-		}
-	}
-	for _, r := range b {
-		if !seen[r.ID] {
-			seen[r.ID] = true
-			merged = append(merged, r)
-		}
-	}
-	sort.Slice(merged, func(i, j int) bool {
-		return merged[i].CreatedAt.After(merged[j].CreatedAt)
-	})
-	if len(merged) > limit {
-		merged = merged[:limit]
-	}
-	return merged
-}
-
-// 防 context 包 import 报未用：mergeRecordsByTimeDesc 不直接用，但 ListReviews 用 ctx
-var _ = context.Background
 
 const (
 	defaultListLimit = 20
@@ -123,15 +92,18 @@ func countRisksBySeverity(raw json.RawMessage) riskCounts {
 // 未配 Store 时返 503 而非 200 空列表，让前端能区分"没有历史"和"功能未启用"。
 // 可见性：
 //   - 必须登录（匿名访客 401）
-//   - 已登录用户 → 返自己创建的 + 匿名遗留（v1 旧 NULL user_id 兼容）
+//   - 已登录用户 → 只看自己创建的记录
+//   - 匿名提交的记录（UserID=nil）：不出现在任何人的列表里，但凭 review URL 仍可直接访问详情
+//
+// 设计：v2 后评审本身不要求登录（匿名也能评），但匿名记录无 owner 不该出现在任何"历史"语义里
+// dev / unit tests 无 Sessions 时 fallback：放行匿名访问 + 列出全部（含 nil UserID），方便本地调试
 func ListReviews(d Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if d.Store == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "history disabled: store not configured"})
 			return
 		}
-		// 强制登录：列表里有其他用户评的 PR 内容（含 repo/title/risk 等），不应对匿名暴露
-		// 仅 OAuth 配置时启用 gate（与 PostReview 一致；dev / unit tests 无 Sessions 时仍开放）
+		// 强制登录：列表里有 PR title / repo / risk 这类内容，不该对匿名访客暴露任何人的提交
 		s := CurrentSession(c)
 		if d.Sessions != nil && s == nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "请先登录后查看评审历史"})
@@ -140,22 +112,25 @@ func ListReviews(d Deps) gin.HandlerFunc {
 		limit := parseLimit(c.Query("limit"))
 		ctx := c.Request.Context()
 
-		// 拿匿名遗留（user_id IS NULL）—— v1 兼容 + dev 模式
-		pub, err := d.Store.List(ctx, nil, limit)
-		if err != nil {
-			slog.Error("list reviews (public)", "err", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		records := pub
-		// 登录用户：union 自己创建的
+		var records []*store.Record
 		if s != nil {
+			// 登录用户：仅自己创建的；匿名记录从列表中完全隐去
 			mine, err := d.Store.List(ctx, &s.Login, limit)
 			if err != nil {
-				slog.Warn("list reviews (mine) failed; returning public only", "err", err)
-			} else {
-				records = mergeRecordsByTimeDesc(mine, pub, limit)
+				slog.Error("list reviews (mine)", "err", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
 			}
+			records = mine
+		} else {
+			// dev fallback：无 Sessions 配置时返全部（含匿名），方便本地调试
+			all, err := d.Store.List(ctx, nil, limit)
+			if err != nil {
+				slog.Error("list reviews (dev fallback)", "err", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			records = all
 		}
 		out := make([]reviewListItem, 0, len(records))
 		for _, r := range records {

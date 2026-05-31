@@ -93,19 +93,13 @@ func indexPRChunks(ctx context.Context, idx index.Indexer, pr gh.PullRequest) {
 // 成功后切到 text/event-stream，按帧推送各 stage 事件。
 func PostReview(d Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 登录 gate：要求 OAuth 登录才能 evaluate；防止匿名滥用 LLM cost / 让 review 有 owner
-		// 仅 OAuth 已配置（d.Sessions 非 nil）时启用；未配 fallback 老 anonymous 行为
+		// 评审本身不要登录门槛——demo 零摩擦优先；防滥用靠 expensive rate limit 中间件 + head_sha 缓存
+		// 登录用户的 review 归档到名下（per-user 历史 + 删除）；匿名 review 不写 store（不污染列表）
 		var creatorLogin string
 		if d.Sessions != nil {
-			s := CurrentSession(c)
-			if s == nil {
-				c.JSON(http.StatusUnauthorized, gin.H{
-					"error":     "请先 GitHub 登录后再提交评审",
-					"login_url": "/api/auth/github/login",
-				})
-				return
+			if s := CurrentSession(c); s != nil {
+				creatorLogin = s.Login
 			}
-			creatorLogin = s.Login
 		}
 
 		var body struct {
@@ -304,9 +298,10 @@ func prMetaPayload(pr gh.PullRequest, sourceURL string) map[string]any {
 
 // persistReview 把本次评审序列化后写入 store；缓存写失败仅记日志，不影响响应。
 // 用 context.Background() 与请求生命周期解耦：写缓存时客户端可能已断开。
-// 返 ID 让 caller emit SSE review_id 帧（前端在流式页面拿到 ULID 后启用 adopt 按钮 / SteerComposer）
+// 返 ID 让 caller emit SSE review_id 帧（前端在流式页面拿到 ULID 后启用 adopt 按钮 / SteerComposer / agent 追问）
 // source 标记触发来源："manual"（用户粘 URL）/"webhook"（GitHub 推 PR 自动评）
-// createdByLogin GitHub login（manual=当前登录用户，webhook=PR 作者）；空串 = 匿名（旧记录）
+// createdByLogin GitHub login（manual=当前登录用户 或 "" 匿名；webhook=PR 作者，恒非空）
+// 匿名记录（UserID=nil）：可凭 ID URL 访问 + 走缓存命中加速；从 ListReviews 隐去避免污染历史
 func persistReview(s store.Store, pr gh.PullRequest, summary string, risks, suggestions json.RawMessage, budget *budgetReportPayload, source string, createdByLogin string) string {
 	if source == "" {
 		source = "manual"
