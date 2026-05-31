@@ -58,4 +58,5 @@ func Register(r *gin.Engine, d Deps) {
 	g.GET("/auth/github/callback", read, AuthCallback(d.OAuthClient, d.Sessions))
 	g.POST("/auth/logout", read, AuthLogout(d.Sessions))
 	g.GET("/me", read, GetMe())
+	g.GET("/perms", read, GetPerms(d.OAuthClient))
 }
