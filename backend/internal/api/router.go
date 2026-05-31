@@ -7,7 +7,9 @@ import (
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/github"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/index"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/llm"
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/oauth"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/prctx"
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/session"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/store"
 )
 
@@ -18,21 +20,24 @@ import (
 // Embedder 可为 nil（RAG 关闭）；B1 引入用于 B2/B3 RAG retriever
 // Retriever 可为 nil（RAG 关闭）；缺失时 prctx 跳 L4
 // Indexer 可为 nil（同 Retriever；通常与 Retriever 同实例，B4 引入分接口）
+// OAuthClient + Sessions 可为 nil（OAuth 未配时 /api/auth/* 返 503）
 type Deps struct {
-	Fetcher   github.Fetcher
-	Provider  llm.Provider
-	Builder   prctx.Builder
-	Store     store.Store
-	Cache     store.Cache
-	Embedder  index.Embedder
-	Retriever index.Retriever
-	Indexer   index.Indexer
+	Fetcher     github.Fetcher
+	Provider    llm.Provider
+	Builder     prctx.Builder
+	Store       store.Store
+	Cache       store.Cache
+	Embedder    index.Embedder
+	Retriever   index.Retriever
+	Indexer     index.Indexer
+	OAuthClient *oauth.Client
+	Sessions    *session.Manager
 }
 
 // Register 挂载 /api 路由组。
 func Register(r *gin.Engine, d Deps) {
 	g := r.Group("/api")
-	g.Use(middleware.AuthCtx())
+	g.Use(middleware.AuthCtx(d.Sessions))
 
 	expensive := middleware.RateLimit(d.Cache, middleware.ExpensiveDefault)
 	read := middleware.RateLimit(d.Cache, middleware.ReadDefault)
@@ -46,4 +51,11 @@ func Register(r *gin.Engine, d Deps) {
 	g.GET("/reviews", read, ListReviews(d))
 	g.GET("/reviews/:id", read, GetReview(d))
 	g.POST("/review/:id/steer", expensive, PostSteer(d))
+
+	// OAuth：登录 / 回调 / 登出 + 当前用户信息
+	// 不走 expensive 限流（用户行为低频）；走 read 限流防滥用
+	g.GET("/auth/github/login", read, AuthLogin(d.OAuthClient))
+	g.GET("/auth/github/callback", read, AuthCallback(d.OAuthClient, d.Sessions))
+	g.POST("/auth/logout", read, AuthLogout(d.Sessions))
+	g.GET("/me", read, GetMe())
 }

@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import { BrandMark } from "@/components/BrandMark";
 import { CIStatus, type CIStatusValue } from "@/components/ui/ci-status";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { UserMenu } from "@/components/auth/UserMenu";
 import { StageChip, type StageState } from "./StageChip";
 
 export type ViewKey = "report" | "diff" | "session";
@@ -110,6 +111,7 @@ export function ReviewTopBar({
         <Sparkle className="h-3 w-3" fill={agentOpen ? "currentColor" : "none"} />
         追问
       </button>
+      <UserMenu />
       <ThemeToggle />
     </header>
   );

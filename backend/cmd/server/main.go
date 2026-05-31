@@ -17,8 +17,10 @@ import (
 	gh "github.com/ecstasoy/PR-Review-Assistant/backend/internal/github"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/index"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/llm"
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/oauth"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/observability"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/prctx"
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/session"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/store"
 )
 
@@ -160,6 +162,20 @@ func buildDeps(cfg config.Config) api.Deps {
 	}
 	// 重新构造 Builder 注入 Retriever；prctx.LayeredBuilder.buildL4 用它召回 RAG references
 	deps.Builder = prctx.NewLayeredBuilder(prctx.WithRetriever(deps.Retriever))
+
+	// OAuth：缺 client_id / client_secret 时跳过；handler 自己返 503
+	// 同时 SessionManager 复用 deps.Cache（Redis 跨实例共享 session）
+	if cfg.GithubOAuthClientID != "" && cfg.GithubOAuthSecret != "" {
+		deps.OAuthClient = &oauth.Client{
+			ClientID:     cfg.GithubOAuthClientID,
+			ClientSecret: cfg.GithubOAuthSecret,
+			RedirectURI:  cfg.GithubOAuthRedirectURI,
+		}
+		deps.Sessions = session.New(deps.Cache, 0)
+		slog.Info("oauth ready", "client_id_prefix", cfg.GithubOAuthClientID[:min(8, len(cfg.GithubOAuthClientID))], "redirect", cfg.GithubOAuthRedirectURI)
+	} else {
+		slog.Warn("oauth disabled: GITHUB_OAUTH_CLIENT_ID / _CLIENT_SECRET not set; /api/auth/* will return 503")
+	}
 	return deps
 }
 
