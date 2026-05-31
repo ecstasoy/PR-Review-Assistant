@@ -16,6 +16,7 @@ import { BrandMark } from "@/components/BrandMark";
 import { CIStatus, type CIStatusValue } from "@/components/ui/ci-status";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { UserMenu } from "@/components/auth/UserMenu";
+import { AdoptCountChip } from "./AdoptCountChip";
 import { StageChip, type StageState } from "./StageChip";
 
 export type ViewKey = "report" | "diff" | "session";
@@ -89,6 +90,7 @@ export function ReviewTopBar({
         </div>
       ) : null}
 
+      <AdoptCountChip />
       <a
         href={githubURL}
         target="_blank"

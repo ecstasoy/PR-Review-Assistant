@@ -17,7 +17,9 @@ interface Props {
 type ActionState =
   | { kind: "idle" }
   | { kind: "posting" }
-  | { kind: "done"; url: string; commitSHA?: string; halfDone?: boolean; halfDoneReason?: string }
+  | { kind: "done"; url: string; commentID?: number; commitSHA?: string; halfDone?: boolean; halfDoneReason?: string }
+  | { kind: "undoing" }
+  | { kind: "undone" }
   | { kind: "error"; msg: string };
 
 // InlineSuggestion 行内建议气泡（DiffView 内嵌锚定到对应代码行）
@@ -47,7 +49,21 @@ export function InlineSuggestion({ suggestion, onCopy }: Props) {
     setComment({ kind: "posting" });
     try {
       const r = await adopt.postComment(suggestion);
-      setComment({ kind: "done", url: r.html_url ?? "" });
+      setComment({ kind: "done", url: r.html_url ?? "", commentID: r.comment_id });
+      adopt.markAdopted(suggestion);
+    } catch (e) {
+      setComment({ kind: "error", msg: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  async function undoComment() {
+    if (!adopt || comment.kind !== "done" || !comment.commentID) return;
+    const cid = comment.commentID;
+    setComment({ kind: "undoing" });
+    try {
+      await adopt.deleteComment(cid);
+      setComment({ kind: "undone" });
+      adopt.markUnadopted(suggestion);
     } catch (e) {
       setComment({ kind: "error", msg: e instanceof Error ? e.message : String(e) });
     }
@@ -65,6 +81,8 @@ export function InlineSuggestion({ suggestion, onCopy }: Props) {
         halfDone: r.comment_posted_but_commit_failed,
         halfDoneReason: r.commit_fail_reason,
       });
+      // commit 算采纳；half-done 也算（comment 上 PR 了）
+      adopt.markAdopted(suggestion);
     } catch (e) {
       setCommit({ kind: "error", msg: e instanceof Error ? e.message : String(e) });
     }
@@ -222,7 +240,7 @@ export function InlineSuggestion({ suggestion, onCopy }: Props) {
 
       {/* 评论后反馈 */}
       {comment.kind === "done" ? (
-        <p className="mt-2 inline-flex items-center gap-1.5 text-[11px] text-ok">
+        <p className="mt-2 inline-flex items-center gap-2 text-[11px] text-ok">
           <Check className="h-3 w-3" />
           已发到 PR
           {comment.url ? (
@@ -236,11 +254,31 @@ export function InlineSuggestion({ suggestion, onCopy }: Props) {
               <ExternalLink className="h-2.5 w-2.5" />
             </a>
           ) : null}
+          {comment.commentID ? (
+            <button
+              type="button"
+              onClick={undoComment}
+              className="inline-flex items-center gap-0.5 text-muted hover:text-high"
+              title="删除这条 PR review comment"
+            >
+              <X className="h-2.5 w-2.5" />
+              撤回
+            </button>
+          ) : null}
+        </p>
+      ) : null}
+      {comment.kind === "undoing" ? (
+        <p className="mt-2 text-[11px] text-muted">撤回中…</p>
+      ) : null}
+      {comment.kind === "undone" ? (
+        <p className="mt-2 inline-flex items-center gap-1 text-[11px] text-muted">
+          <X className="h-3 w-3" />
+          已撤回
         </p>
       ) : null}
       {comment.kind === "error" ? (
         <p className="mt-2 text-[11px] text-high" title={comment.msg}>
-          发送失败：{comment.msg}
+          失败：{comment.msg}
         </p>
       ) : null}
 

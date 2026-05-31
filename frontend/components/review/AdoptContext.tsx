@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useMemo, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import type { PrMeta, Suggestion } from "@/lib/types";
 import type { PermsResponse } from "@/lib/perms";
@@ -32,6 +32,12 @@ interface AdoptContextValue {
   postComment: (s: Suggestion) => Promise<AdoptResult>;
   // postCommit 占位；G6c PR 实装
   postCommit: (s: Suggestion) => Promise<AdoptResult>;
+  // deleteComment 撤回 PR review comment；cid 是 GitHub databaseId
+  deleteComment: (cid: number) => Promise<void>;
+  // 已采纳的 suggestion idx 集合；localStorage 按 reviewId 持久；InlineSuggestion 调 markAdopted/markUnadopted
+  adoptedIdxs: Set<number>;
+  markAdopted: (s: Suggestion) => void;
+  markUnadopted: (s: Suggestion) => void;
 }
 
 const AdoptContext = createContext<AdoptContextValue | null>(null);
@@ -45,7 +51,76 @@ interface ProviderProps {
   children: ReactNode;
 }
 
+// adoptedStorageKey 本地持久化 key 模式；按 reviewId 隔离
+function adoptedStorageKey(reviewId: string): string {
+  return `lgtm-adopted-${reviewId}`;
+}
+
 export function AdoptProvider({ reviewId, prMeta, perms, permsLoading, suggestions, children }: ProviderProps) {
+  // 已采纳 idx 集合；初始空，hydrate effect 从 localStorage 加载
+  const [adoptedIdxs, setAdoptedIdxs] = useState<Set<number>>(() => new Set());
+
+  // hydrate / 切 reviewId 时重读
+  useEffect(() => {
+    if (!reviewId || typeof window === "undefined") {
+      setAdoptedIdxs(new Set());
+      return;
+    }
+    try {
+      const raw = window.localStorage.getItem(adoptedStorageKey(reviewId));
+      if (raw) {
+        const arr = JSON.parse(raw) as number[];
+        setAdoptedIdxs(new Set(arr));
+      } else {
+        setAdoptedIdxs(new Set());
+      }
+    } catch {
+      setAdoptedIdxs(new Set());
+    }
+  }, [reviewId]);
+
+  const persist = useCallback(
+    (s: Set<number>) => {
+      if (!reviewId || typeof window === "undefined") return;
+      try {
+        window.localStorage.setItem(adoptedStorageKey(reviewId), JSON.stringify([...s]));
+      } catch {
+        // 私密模式 / 满 quota → 静默；UI 仍内存追踪
+      }
+    },
+    [reviewId],
+  );
+
+  const markAdopted = useCallback(
+    (s: Suggestion) => {
+      const idx = suggestions.indexOf(s);
+      if (idx < 0) return;
+      setAdoptedIdxs((prev) => {
+        if (prev.has(idx)) return prev;
+        const next = new Set(prev);
+        next.add(idx);
+        persist(next);
+        return next;
+      });
+    },
+    [suggestions, persist],
+  );
+
+  const markUnadopted = useCallback(
+    (s: Suggestion) => {
+      const idx = suggestions.indexOf(s);
+      if (idx < 0) return;
+      setAdoptedIdxs((prev) => {
+        if (!prev.has(idx)) return prev;
+        const next = new Set(prev);
+        next.delete(idx);
+        persist(next);
+        return next;
+      });
+    },
+    [suggestions, persist],
+  );
+
   const postComment = useCallback(
     async (s: Suggestion): Promise<AdoptResult> => {
       if (!reviewId) throw new Error("评审还在流式生成中，请等结束");
@@ -83,9 +158,26 @@ export function AdoptProvider({ reviewId, prMeta, perms, permsLoading, suggestio
     [reviewId, suggestions],
   );
 
+  const deleteComment = useCallback(
+    async (cid: number): Promise<void> => {
+      if (!reviewId) throw new Error("无 reviewId，无法撤回");
+      const res = await fetch(`/api/review/${encodeURIComponent(reviewId)}/comment/${cid}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    },
+    [reviewId],
+  );
+
   const value = useMemo(
-    () => ({ reviewId, prMeta, perms, permsLoading, suggestions, postComment, postCommit }),
-    [reviewId, prMeta, perms, permsLoading, suggestions, postComment, postCommit],
+    () => ({
+      reviewId, prMeta, perms, permsLoading, suggestions,
+      postComment, postCommit, deleteComment,
+      adoptedIdxs, markAdopted, markUnadopted,
+    }),
+    [reviewId, prMeta, perms, permsLoading, suggestions, postComment, postCommit, deleteComment, adoptedIdxs, markAdopted, markUnadopted],
   );
 
   return <AdoptContext.Provider value={value}>{children}</AdoptContext.Provider>;

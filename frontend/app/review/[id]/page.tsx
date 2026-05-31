@@ -274,6 +274,13 @@ function ReviewDetailPageContent({ id }: { id: string }) {
   }
 
   return (
+    <AdoptProvider
+      reviewId={effectiveReviewID ?? undefined}
+      prMeta={pr ?? undefined}
+      perms={perms}
+      permsLoading={permsLoading}
+      suggestions={suggestions}
+    >
     <div className="flex h-screen flex-col bg-bg">
       <ReviewTopBar
         pr={pr}
@@ -315,21 +322,13 @@ function ReviewDetailPageContent({ id }: { id: string }) {
                 stageErrors={stageErrors}
               />
             ) : view === "diff" ? (
-              <AdoptProvider
-                reviewId={effectiveReviewID ?? undefined}
-                prMeta={pr ?? undefined}
-                perms={perms}
-                permsLoading={permsLoading}
+              <DiffView
+                files={files}
+                risks={risks}
                 suggestions={suggestions}
-              >
-                <DiffView
-                  files={files}
-                  risks={risks}
-                  suggestions={suggestions}
-                  expandedFilePath={expandRequest?.path}
-                  expandedFileNonce={expandRequest?.nonce}
-                />
-              </AdoptProvider>
+                expandedFilePath={expandRequest?.path}
+                expandedFileNonce={expandRequest?.nonce}
+              />
             ) : (
               <AgentSessionView
                 pr={pr}
@@ -361,6 +360,7 @@ function ReviewDetailPageContent({ id }: { id: string }) {
         ) : null}
       </div>
     </div>
+    </AdoptProvider>
   );
 }
 

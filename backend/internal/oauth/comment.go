@@ -66,3 +66,36 @@ func (c *Client) PostPRComment(
 	}
 	return &cm, nil
 }
+
+// DeletePRComment 撤回一条 PR review comment（用户后悔点了 💬 评论 → 还能删）
+// 文档 https://docs.github.com/rest/pulls/comments#delete-a-review-comment-for-a-pull-request
+// 权限：comment 作者本人或 maintainer 才能删
+// 404 当成"已被删"返 nil 让 caller 视作幂等
+func (c *Client) DeletePRComment(ctx context.Context, accessToken, owner, repo string, commentID int64) error {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/pulls/comments/%d", owner, repo, commentID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	if err != nil {
+		return fmt.Errorf("oauth: build delete req: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	res, err := c.httpClient().Do(req)
+	if err != nil {
+		return fmt.Errorf("oauth: delete comment: %w", err)
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	switch res.StatusCode {
+	case http.StatusNoContent, http.StatusOK:
+		return nil
+	case http.StatusNotFound:
+		// 已被删 → 幂等
+		return nil
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return fmt.Errorf("oauth: delete comment forbidden (%d): %s", res.StatusCode, string(body))
+	default:
+		return fmt.Errorf("oauth: delete comment %d: %s", res.StatusCode, string(body))
+	}
+}
