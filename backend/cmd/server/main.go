@@ -17,6 +17,7 @@ import (
 	gh "github.com/ecstasoy/PR-Review-Assistant/backend/internal/github"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/index"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/llm"
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/memory"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/oauth"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/observability"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/prctx"
@@ -162,6 +163,11 @@ func buildDeps(cfg config.Config) api.Deps {
 	}
 	// 重新构造 Builder 注入 Retriever；prctx.LayeredBuilder.buildL4 用它召回 RAG references
 	deps.Builder = prctx.NewLayeredBuilder(prctx.WithRetriever(deps.Retriever))
+
+	// Memory：会话记忆走 deps.Cache（Redis 跨实例 / Memory 本地）；默认 cap=10 turn / TTL=7d
+	// 失败 / nil 时 SessionStore 是 nil，steer.go agent 路径会 skip load/save，不影响主流程
+	deps.Memory = memory.NewCacheSessionStore(deps.Cache, 0, 0)
+	slog.Info("memory ready", "max_turns", memory.DefaultMaxTurns, "ttl", memory.DefaultTTL)
 
 	// OAuth：缺 client_id / client_secret 时跳过；handler 自己返 503
 	// 同时 SessionManager 复用 deps.Cache（Redis 跨实例共享 session）
