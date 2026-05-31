@@ -27,6 +27,9 @@ export interface StreamCallbacks {
   onStageError?: (stage: string, message: string) => void;
   onStageDone?: (stage: string) => void;
   onDone?: () => void;
+  // review_id：流式评审 persist 后后端发；前端拿来在 /review/streaming 页启用 adopt + steer 按钮
+  // 没这帧前端只能等用户回首页点列表条目；详见 PR #91
+  onReviewID?: (id: string) => void;
 }
 
 // SteerMode 决定 steer 端点跑哪条路径：
@@ -182,6 +185,11 @@ function dispatch(ev: ParsedFrame, cb: StreamCallbacks): void {
     case "error": {
       const p = parsed as { stage?: string; message?: string };
       cb.onStageError?.(p.stage ?? "?", p.message ?? "");
+      break;
+    }
+    case "review_id": {
+      const p = parsed as { id?: string };
+      if (p.id) cb.onReviewID?.(p.id);
       break;
     }
     case "done": {

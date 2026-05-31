@@ -70,24 +70,48 @@ export function InlineSuggestion({ suggestion, onCopy }: Props) {
     }
   }
 
-  // 按钮可用性判定：perms 决定（缺登录 / 无权限 / streaming 等）
+  // 按钮可用性判定：reviewId + 登录 + 权限 + PR 状态
   const perms = adopt?.perms ?? null;
   const reviewReady = !!adopt?.reviewId;
   const authenticated = !!perms?.authenticated;
 
+  // PR 状态：backend 已收成 open/closed/merged 三态（real_fetcher.go）
+  // merged: head branch 通常已删 → commit 必失败 → 禁
+  // closed: PR 已关闭 → commit 没意义 → 禁；comment 可发但弱化
+  // open（默认）：按 perms 决定
+  const prState = adopt?.prMeta?.state ?? "open";
+  const prMerged = prState === "merged";
+  const prClosed = prState === "closed";
+  const prInactive = prMerged || prClosed;
+
   const commentEnabled = reviewReady && authenticated && (perms?.can_comment ?? false);
-  const commitEnabled = reviewReady && authenticated && (perms?.can_commit ?? false);
+  // commit 在 PR 已 merged / closed 时强制禁，无视 perm
+  const commitEnabled = !prInactive && reviewReady && authenticated && (perms?.can_commit ?? false);
 
   // tooltip 文案：按状态优先级返
   function disableReason(): string {
-    if (!reviewReady) return "评审还在流式生成中，等结束后可用";
+    if (!reviewReady) return "评审保存中…请等几秒";
     if (!authenticated) return "登录后才能直接发到 GitHub";
     if (perms?.reason) return perms.reason;
     return "";
   }
 
+  function commitDisableReason(): string {
+    if (prMerged) return "PR 已合并，head 分支通常已删除，无法提交 commit（评论仍可发作历史记录）";
+    if (prClosed) return "PR 已关闭，无法提交 commit";
+    if (!reviewReady) return disableReason();
+    if (!authenticated) return "登录后才能提交";
+    if (!(perms?.can_commit)) return perms?.reason || "无 push 权限；可改用「评论」";
+    return "";
+  }
+
   return (
     <div className="animate-fade-up border-y border-border bg-surface-2 py-2.5 pl-[50px] pr-3.5">
+      {prInactive ? (
+        <div className="mb-2 inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-1 text-[11px] text-muted">
+          {prMerged ? "📌" : "🗃"} PR 已{prMerged ? "合并" : "关闭"}，建议仅供回顾
+        </div>
+      ) : null}
       <div className="mb-1.5 flex items-center gap-[7px]">
         <span className="inline-flex items-center gap-1 rounded-[5px] bg-accent-soft px-[7px] py-0.5 font-mono text-xs font-semibold text-accent">
           <Sparkle className="h-3 w-3" fill="currentColor" />
@@ -151,7 +175,7 @@ export function InlineSuggestion({ suggestion, onCopy }: Props) {
           </button>
         )}
 
-        {/* ✅ 提交：G6c 真接通 */}
+        {/* ✅ 提交：G6c 真接通；PR merged/closed 时强制禁 */}
         {commitEnabled ? (
           <button
             type="button"
@@ -167,11 +191,7 @@ export function InlineSuggestion({ suggestion, onCopy }: Props) {
           <button
             type="button"
             disabled
-            title={
-              !authenticated
-                ? "登录后才能提交"
-                : disableReason() || "无 push 权限；可改用「评论」"
-            }
+            title={commitDisableReason()}
             className="inline-flex h-7 items-center gap-1 rounded-md border border-border-strong bg-surface px-2.5 text-xs text-muted opacity-60 cursor-not-allowed"
           >
             <GitCommit className="h-3 w-3" />

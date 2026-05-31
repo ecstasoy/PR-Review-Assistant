@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useMemo, type ReactNode } from "react";
 
-import type { Suggestion } from "@/lib/types";
+import type { PrMeta, Suggestion } from "@/lib/types";
 import type { PermsResponse } from "@/lib/perms";
 
 // AdoptResult 后端 /comment 或 /commit 端点成功返回字段
@@ -18,9 +18,11 @@ export interface AdoptResult {
 }
 
 // AdoptContextValue 给 InlineSuggestion 用的 props 集合
-// reviewId 缺失（streaming 模式）→ 所有按钮 disable
+// reviewId 缺失（streaming 模式且尚未拿到 review_id 帧）→ 所有按钮 disable
+// prMeta 用于 PR 状态感知：merged/closed 时 commit 按钮强制禁，评论按钮加 banner
 interface AdoptContextValue {
   reviewId?: string;
+  prMeta?: PrMeta;
   perms: PermsResponse | null;
   permsLoading: boolean;
   // suggestions 完整列表；InlineSuggestion 用 findIndex 找自己 idx
@@ -36,13 +38,14 @@ const AdoptContext = createContext<AdoptContextValue | null>(null);
 
 interface ProviderProps {
   reviewId?: string;
+  prMeta?: PrMeta;
   perms: PermsResponse | null;
   permsLoading: boolean;
   suggestions: Suggestion[];
   children: ReactNode;
 }
 
-export function AdoptProvider({ reviewId, perms, permsLoading, suggestions, children }: ProviderProps) {
+export function AdoptProvider({ reviewId, prMeta, perms, permsLoading, suggestions, children }: ProviderProps) {
   const postComment = useCallback(
     async (s: Suggestion): Promise<AdoptResult> => {
       if (!reviewId) throw new Error("评审还在流式生成中，请等结束");
@@ -81,8 +84,8 @@ export function AdoptProvider({ reviewId, perms, permsLoading, suggestions, chil
   );
 
   const value = useMemo(
-    () => ({ reviewId, perms, permsLoading, suggestions, postComment, postCommit }),
-    [reviewId, perms, permsLoading, suggestions, postComment, postCommit],
+    () => ({ reviewId, prMeta, perms, permsLoading, suggestions, postComment, postCommit }),
+    [reviewId, prMeta, perms, permsLoading, suggestions, postComment, postCommit],
   );
 
   return <AdoptContext.Provider value={value}>{children}</AdoptContext.Provider>;
