@@ -29,7 +29,7 @@ export function SummaryCard({ summary, streaming = false }: Props) {
           </span>
         ) : null}
       </header>
-      <div className="space-y-3 px-4 py-4 text-sm leading-relaxed text-text [&_code]:rounded [&_code]:bg-surface-2 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[12px] [&_h1]:mt-4 [&_h1]:text-base [&_h1]:font-semibold [&_h2]:mt-3 [&_h2]:text-sm [&_h2]:font-semibold [&_li]:my-1 [&_p]:my-2 [&_strong]:font-semibold [&_strong]:text-text [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5">
+      <div className="space-y-3 px-4 py-4 text-sm leading-relaxed text-text [&_code]:rounded [&_code]:bg-surface-2 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[12px] [&_h1]:mt-4 [&_h1]:text-base [&_h1]:font-semibold [&_h2]:mt-3 [&_h2]:text-sm [&_h2]:font-semibold [&_h3]:mt-3 [&_h3]:mb-1 [&_h3]:text-[13px] [&_h3]:font-semibold [&_li]:my-1 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_strong]:font-semibold [&_strong]:text-text [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5">
         {summary ? (
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{summary}</ReactMarkdown>
         ) : (

@@ -26,9 +26,6 @@ export function LoginGateBanner() {
             <GitHubMark className="h-4 w-4" />
             用 GitHub 账号登录
           </a>
-          <p className="mt-3 text-xs text-faint">
-            浏览历史评审记录无需登录；下面列表对所有访客可见。
-          </p>
         </div>
       </div>
     </div>

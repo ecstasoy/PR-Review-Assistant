@@ -806,8 +806,8 @@ function LlmDetail({
         result={suggestionsDone ? `${suggestions.length} 条` : ""}
       />
       {summary ? (
-        <div className="mt-2 border-t border-dashed border-border pt-2.5 text-sm leading-relaxed text-text-2 line-clamp-6">
-          {summary}
+        <div className="mt-2 max-h-[180px] overflow-hidden border-t border-dashed border-border pt-2.5 text-sm leading-relaxed text-text-2 [&_code]:rounded [&_code]:bg-surface-2 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[11px] [&_h1]:mt-2 [&_h1]:text-[13px] [&_h1]:font-semibold [&_h2]:mt-2 [&_h2]:text-xs [&_h2]:font-semibold [&_h3]:mt-2 [&_h3]:text-xs [&_h3]:font-semibold [&_li]:my-0.5 [&_p]:my-1.5 [&_strong]:font-medium [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-4">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{summary}</ReactMarkdown>
         </div>
       ) : null}
       {risksDone && risks.length > 0 ? (
