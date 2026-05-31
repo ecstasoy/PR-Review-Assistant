@@ -4,22 +4,18 @@ import { CornerDownLeft, ExternalLink, GitPullRequest, Sparkle } from "lucide-re
 
 import { cn } from "@/lib/utils";
 
-// 设计原型示例 chips：3 条公开 PR 链接快速填入
+// 示例 chip：用本仓自己的 PR（一定能访问 + 装了 LGTM App，可演示采纳按钮）
+// 早期 golang/go + fastapi/fastapi 因 token rate limit / 私权问题被移除
 const EXAMPLES = [
   {
-    label: "golang/go",
-    url: "https://github.com/golang/go/pull/67890",
-    desc: "Go · runtime GC",
+    label: "ecstasoy/PR-Review-Assistant",
+    url: "https://github.com/ecstasoy/PR-Review-Assistant/pull/93",
+    desc: "Go · webhook + slash command",
   },
   {
     label: "vercel/next.js",
     url: "https://github.com/vercel/next.js/pull/71402",
     desc: "Rust · turbopack",
-  },
-  {
-    label: "fastapi/fastapi",
-    url: "https://github.com/fastapi/fastapi/pull/12056",
-    desc: "Python · DI",
   },
 ] as const;
 
