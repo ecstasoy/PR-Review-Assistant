@@ -1,218 +1,298 @@
 # LGTM
 
-> *Looks Good To Me* — 一个 **站在 reviewer 视角** 的 AI 辅助评审工具。粘贴任意 GitHub PR 链接，30 秒拿到结构化评审：**变更总结 / 风险识别 / 行内建议**。
->
-> 产品名取自 code review 里批准 PR 的经典缩写；主标识是终端光标字标（小写等宽 `lgtm` + 绿色光标块），绿色与产品里 CI passing、diff added 同源。完整品牌资产见 [`frontend/public/brand/`](./frontend/public/brand/)。
+LGTM 是一个面向 GitHub Pull Request 的评审助手。它会拉取 PR 元信息、diff、CI 状态和仓库约定文档，然后分三步生成变更摘要、风险列表和行内修改建议。登录后可以保存历史评审；安装 GitHub App 后，还能把建议发回 PR，或由 webhook 在新 PR 和 push 更新时自动评审。
 
-## ✨ 核心能力
+当前主流程已经接通 OAuth、Webhook、RAG 索引、历史记录和追问 Agent。
 
-- **F1 PR 拉取**：粘 URL 即用，无需仓库写权限；自动带回 meta（作者 / 角色 / state / labels / refs / stats）+ CI 状态 + 完整文件 diff
-- **F2 三层上下文**：diff hunk → 变更文件全文 / 受影响函数 → 项目约定文件（README / CONTRIBUTING / CLAUDE.md），按预算自动裁剪
-- **F3 三阶段并行 AI 分析**：总结 / 风险（severity × category 两维分级）/ 行内建议（按 hunk 出可应用 patch），三阶段独立调用、SSE 流式回吐
-- **F4 流式响应**：SSE 推送，summary 边生成边渲染；首字节 < 3s（mock 模式 < 100ms）
-- **F5 SHA 级缓存**：cache key = `owner/repo:pr:head_sha`；head_sha 不变时秒回
+## 在线试用
 
-## 🎬 Demo 视频
+线上地址：<https://lgtm-alpha.vercel.app>
 
-> 60 秒演示从粘 URL 到看到三阶段评审结果的完整流程；评审历史 + 缓存秒回 + 会话视图 5 步时间线。
-> 链接将在 demo 视频 PR 上线后回填。
+基本流程：
 
-## 🚀 快速开始
+1. 用 GitHub 登录。
+2. 粘贴公开 PR 链接，例如 `https://github.com/ecstasoy/PR-Review-Assistant/pull/93`。
+3. 等待 SSE 流式返回。摘要会边生成边显示，风险和建议阶段完成后一次性更新。
 
-> 需要：**Go 1.22+** · **Node 20+** · **pnpm**（或 npm）
+评审页有三个视图：
+
+- **评审报告**：摘要、风险列表、行内建议。
+- **改动 Diff**：文件树、patch hunk、建议定位。
+- **代理会话**：展示解析 PR、拉取 diff、构建上下文、调用 LLM、写缓存的步骤；也可以继续追问这个 PR。
+
+只看评审结果不需要给仓库安装 App。要把建议评论到 PR、把 GitHub suggestion 应用成 commit，或者让 bot 在 `pull_request` webhook 后自动评审，需要把 LGTM GitHub App 安装到目标仓库。
+
+## 当前能力
+
+- 拉取 GitHub PR 的标题、正文、作者、分支、标签、统计信息、文件 diff、CI checks。
+- 读取仓库根目录的 `README.md`、`CONTRIBUTING.md`、`CLAUDE.md` 或 `AGENTS.md`，作为项目约定上下文。
+- 并发运行三个评审阶段：`summary`、`risks`、`suggestions`。
+- 通过 SSE 推送 `pr`、`files`、`budget_report`、`summary_delta`、`risks_done`、`suggestions_done`、`review_id` 等事件。
+- 按 `owner/repo/pr/head_sha` 缓存结果。head SHA 不变时可直接回放历史结果。
+- 支持 SQLite 和 Postgres 作为持久化存储，支持 MemoryCache 和 RedisCache 做 session、限流和通知缓存。
+- 支持 GitHub OAuth 登录，session 放在 HttpOnly cookie 中。
+- 支持 GitHub App webhook：`pull_request.opened`、`synchronize`、`reopened` 自动评审；PR 评论 `/lgtm review` 可手动重跑。
+- 支持把单条建议发成 PR review comment，建议带 `suggestion` 代码块时可进一步调用 GitHub GraphQL 应用成 commit。
+- 支持追问 Agent。沙盒工具（`read_file`、`list_dir`、`grep_patches`）只能访问本 PR 改动文件；接入 RAG 后额外提供 `search_repo` 工具按 query 在全仓索引内语义检索，不会任意读本地文件系统。
+
+几个限制也需要直接说明：
+
+- GitHub `ListFiles` 当前只取第一页，最多 100 个文件；超大 PR 会丢后续文件。
+- L2 上下文当前主要是 patch hunk，`FileContext.FullText` 字段已预留，但真实文件全文还没有接入。
+- `LLM_PROVIDER=mock` 只能验证启动、拉取和 summary 流式输出；`risks` 和 `suggestions` 需要 JSON 输出，mock 默认回复不是 JSON，所以完整体验要接真实模型。
+- `backend/internal/review/orchestrator.go` 是早期占位。当前真实调度逻辑在 `backend/internal/api/review.go` 的 `mergeStages` 和相关函数里。
+
+## 本地开发
+
+依赖：
+
+- Go 1.25+
+- Node 20+
+- pnpm 10+
+
+安装并启动：
 
 ```bash
-# 1. 拉代码
-git clone <repo-url> lgtm && cd lgtm
-
-# 2. 装依赖
 make install
-# 等同于：cd backend && go mod tidy; cd frontend && pnpm install
-
-# 3. 配置环境（可选；不配走 mock 模式可直接演示）
-cp backend/.env.example backend/.env
-# 编辑 backend/.env：至少填 GITHUB_TOKEN；想用真实 LLM 还要填 OPENAI_API_KEY
-
-# 4. 一键启动前后端
 make dev
-# 后端: http://localhost:8080  ·  前端: http://localhost:3000
-
-# 5. 验证健康
-curl http://localhost:8080/health   # → {"status":"ok"}
 ```
 
-试跑：打开 http://localhost:3000，粘贴任意公开 PR 链接（如 `https://github.com/golang/go/pull/12345`）→ 落地页提交后跳 `/review/streaming?url=…`，SSE 逐步出总结 / 风险 / 建议。
+默认端口：
 
-## ☁️ 部署
+- 后端：`http://localhost:8080`
+- 前端：`http://localhost:3000`
+- 健康检查：`http://localhost:8080/api/health`
 
-最小可行：**Fly.io（后端）+ Vercel（前端）**，全免费档够 demo。完整步骤见 [`docs/DEPLOY.md`](./docs/DEPLOY.md)。
+不配置环境变量时，后端会用 `mock` LLM provider 启动，也不会强制登录；可以直接调用后端接口：
 
 ```bash
-# 后端
-cd backend
-flyctl launch --no-deploy --copy-config       # 用现成 fly.toml
-flyctl volumes create data --size 1 --region nrt
-flyctl secrets set OPENAI_API_KEY=sk-xxx GITHUB_TOKEN=ghp_yyy
-flyctl deploy
-# → https://lgtm-backend.fly.dev
-
-# 前端
-cd ../frontend
-vercel link
-vercel env add BACKEND_URL production         # 填 https://lgtm-backend.fly.dev
-vercel deploy --prod
-# → https://lgtm-frontend.vercel.app
+curl -N -X POST http://localhost:8080/api/review \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://github.com/ecstasoy/PR-Review-Assistant/pull/93"}'
 ```
 
-升级路径（PG / Redis / OAuth / Sentry / 自有域名）见 [`docs/DEPLOY.md`](./docs/DEPLOY.md) 「升级路径」节。
+前端落地页目前默认有登录门槛。如果本地没有配置 GitHub OAuth，可以直接打开流式页测试 UI：
 
-## ⚙️ 环境配置
+```text
+http://localhost:3000/review/streaming?url=https%3A%2F%2Fgithub.com%2Fecstasoy%2FPR-Review-Assistant%2Fpull%2F93
+```
 
-后端启动时由 `godotenv` 自动从 `backend/.env` 加载；生产环境直接用 process env，无需 `.env` 文件。
+### 接真实模型
 
-| 变量 | 默认 | 说明 |
-|---|---|---|
-| `PORT` | `8080` | 后端 HTTP 监听端口 |
-| `GITHUB_TOKEN` | _空_ | GitHub PAT；不配走匿名（60 req/h + 无法读私库） |
-| `LLM_PROVIDER` | `mock` | `mock`（无 key 演示）或 `openai`（任意 OpenAI 兼容 endpoint） |
-| `OPENAI_API_KEY` | _空_ | `LLM_PROVIDER=openai` 时必填；缺失 → 自动降级 `mock` + WARN 日志 |
-| `OPENAI_BASE_URL` | `https://api.deepseek.com` | DeepSeek / OpenAI / Kimi / 通义 任选 |
-| `LLM_MODEL` | `deepseek-chat` | 与 BASE_URL 匹配的模型名 |
-| `SQLITE_PATH` | `./data/reviews.db` | SQLite 文件路径；父目录不存在自动建 |
+本地开发时可以新建 `backend/.env`，后端启动会自动读取 `.env` 或 `backend/.env`。
 
-**部署环境凭证管理**：
+```env
+LLM_PROVIDER=openai
+OPENAI_BASE_URL=https://api.deepseek.com
+OPENAI_API_KEY=sk-xxx
+LLM_MODEL=deepseek-chat
 
-| 平台 | 注入方式 |
-|---|---|
-| Fly.io | `fly secrets set OPENAI_API_KEY=...` |
-| GitHub Actions | Repo Secrets → workflow `env: ... ${{ secrets.X }}` |
-| Docker | `docker run -e OPENAI_API_KEY=...` 或 `--env-file` |
-| Vercel | 项目设置 → 环境变量 |
+GITHUB_TOKEN=ghp_xxx
+SQLITE_PATH=./data/reviews.db
+RAG_DB_PATH=./data/rag.db
+```
 
-## 📡 API 路由
+`openai` provider 调的是 OpenAI-compatible `/v1/chat/completions`。DeepSeek、OpenAI、Kimi、通义这类兼容接口都可以通过 `OPENAI_BASE_URL` 和 `LLM_MODEL` 切换。`GITHUB_TOKEN` 可选，但不填会走 GitHub 匿名限流，公开仓库也容易超过 60 req/h 的速率上限。
 
-后端 Gin router，路径不带前缀（前端 `NEXT_PUBLIC_BACKEND_URL` 拼）。
+### 接 OAuth 和 GitHub App
+
+如果要在本地走完整前端登录、评论、提交、webhook 流程，需要 GitHub App 的 OAuth 配置：
+
+```env
+GITHUB_OAUTH_CLIENT_ID=Iv1.xxxx
+GITHUB_OAUTH_CLIENT_SECRET=xxxx
+GITHUB_OAUTH_REDIRECT_URI=http://localhost:3000/api/auth/github/callback
+
+GITHUB_APP_ID=123456
+GITHUB_APP_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----"
+GITHUB_APP_WEBHOOK_SECRET=replace-with-random-secret
+```
+
+当前代码把 `GITHUB_APP_PRIVATE_KEY` 当 PEM 内容解析，不会自动读取文件路径。Webhook 本地调试可用 `ngrok http 8080`，GitHub App 的 Webhook URL 填 `<ngrok-url>/api/webhook/github`。
+
+App 权限建议以 [`docs/github-app-manifest.yml`](./docs/github-app-manifest.yml) 为准：`contents: read`、`metadata: read`、`pull_requests: write`、`checks: read`，`issues: read` 可按需要保留。真正把 suggestion 应用成 commit 时，GitHub 还会按当前登录用户对 PR head 分支的权限和 fork 可编辑状态做最终裁决。
+
+### 开启 RAG
+
+Embedding 和聊天模型分开配置。默认 `EMBEDDING_PROVIDER=mock`，可以跑通流程，但向量没有语义质量。真实召回建议用 OpenAI 兼容 embedding 服务：
+
+```env
+EMBEDDING_PROVIDER=openai
+EMBEDDING_BASE_URL=https://api.openai.com
+EMBEDDING_API_KEY=sk-xxx
+EMBEDDING_MODEL=text-embedding-3-small
+RAG_DB_PATH=./data/rag.db
+```
+
+运行时会把本次 PR 的 patch 按 hunk 切成 chunk 写入 `rag.db`。这能积累同一仓库过去评审过的 PR 上下文，但不是完整仓库索引。
+
+如果要先索引整个本地仓库，可以手动跑：
+
+```bash
+cd backend
+go run ./cmd/indexrepo --scope ecstasoy/PR-Review-Assistant --dir .. --db ./data/rag.db --env .env
+```
+
+容器部署时还有一条路径：`backend/entrypoint.sh` 会在 `RAG_SCOPE` 非空且 `/app/src` 存在时，后台执行 `/app/indexrepo` 做全仓预索引。Fly 配置里已经给本仓设置了 `RAG_SCOPE`。
+
+## API 概览
+
+后端路由统一挂在 `/api` 下，前端 Next.js 通过 `next.config.ts` 把 `/api/*` rewrite 到后端。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| `GET` | `/health` | 健康检查；返回 `{"status":"ok"}` |
-| `POST` | `/review` | 提交 PR URL，SSE 流式回吐 `pr / files / summary_delta / risks_done / suggestions_done / stage_done / info / error / done` 事件 |
-| `GET` | `/reviews?limit=N` | 历史评审列表（最近 N 条，默认 100），含 owner / repo / pr / head_sha / title / created_at / ci / risk_counts / lang |
-| `GET` | `/reviews/:id` | 单条评审详情；含完整 PR meta + files + summary + risks + suggestions |
+| `GET` | `/api/health` | liveness |
+| `GET` | `/api/health/ready` | store readiness |
+| `POST` | `/api/review` | 提交 PR URL，返回 SSE |
+| `GET` | `/api/reviews` | 评审历史列表 |
+| `GET` | `/api/reviews/:id` | 评审详情 |
+| `DELETE` | `/api/reviews/:id` | 删除自己的评审记录 |
+| `POST` | `/api/review/:id/steer` | 按用户引导重跑风险/建议，或启动 Agent 追问 |
+| `POST` | `/api/review/:id/comment/:idx` | 把第 `idx` 条建议发到 GitHub PR |
+| `POST` | `/api/review/:id/commit/:idx` | 发评论后调用 GitHub GraphQL 应用 suggestion |
+| `DELETE` | `/api/review/:id/comment/:cid` | 删除已发出的 PR review comment |
+| `GET` | `/api/auth/github/login` | GitHub OAuth 登录 |
+| `GET` | `/api/auth/github/callback` | OAuth callback |
+| `POST` | `/api/auth/logout` | 登出 |
+| `GET` | `/api/me` | 当前登录用户 |
+| `GET` | `/api/perms?owner=&repo=` | 当前用户对仓库的评论/提交权限 |
+| `POST` | `/api/webhook/github` | GitHub App webhook |
+| `GET` | `/api/notifications` | webhook 完成后的站内通知 |
 
-SSE 事件协议详见 `frontend/lib/sse.ts` 与 `backend/internal/api/review.go`。
+更细的事件协议可看 [`frontend/lib/sse.ts`](./frontend/lib/sse.ts) 和 [`backend/internal/api/review.go`](./backend/internal/api/review.go)。
 
-## 🧩 架构概览
+## 代码入口
 
-```
-┌──────────────────────────┐         ┌────────────────────────────────────────┐
-│ Next.js 15 App Router    │ ──SSE→  │ Go Backend (Gin)                       │
-│ • app/(main)/ landing+   │         │  ├─ internal/api       HTTP + SSE       │
-│   history (chrome wrapped) │         │  ├─ internal/github   PR meta+diff+CI │
-│ • app/review/[id]/        │         │  ├─ internal/prctx    三层上下文构建    │
-│   report / diff / session │         │  ├─ internal/prompts  go:embed 模板    │
-│ • lib/sse.ts SSE 客户端    │         │  ├─ internal/llm      Provider 接口    │
-│ • Tailwind v4 + tokens    │         │  ├─ internal/review   3 阶段并行调度    │
-│                          │         │  ├─ internal/store    SQLite 缓存       │
-└──────────────────────────┘         │  ├─ internal/index    L4 索引占位（v3） │
-                                     │  └─ internal/agent    agent 循环占位     │
-                                     └────────────────────────────────────────┘
-                                                  │
-                                          ┌───────┴────────┐
-                                          ↓                ↓
-                                    GitHub REST API   LLM Provider
-                                                       (DeepSeek/OpenAI/Mock)
-```
+后端：
 
-## 🧠 模型选择
+- [`backend/cmd/server/main.go`](./backend/cmd/server/main.go)：加载配置、选择 LLM provider、选择 store/cache、接 RAG、注册路由。
+- [`backend/internal/api/review.go`](./backend/internal/api/review.go)：手动评审主流程，包含 SSE、缓存、RAG 写入、三阶段并发调度。
+- [`backend/internal/review/*.go`](./backend/internal/review/)：summary、risks、suggestions 三个 stage。
+- [`backend/internal/prctx/layered.go`](./backend/internal/prctx/layered.go)：L1-L4 上下文构建和预算裁剪。
+- [`backend/internal/index/`](./backend/internal/index/)：embedding、SQLite RAG、离线索引接口。
+- [`backend/internal/agent/`](./backend/internal/agent/)：ReAct 风格工具调用循环和内置沙盒工具。
+- [`backend/internal/oauth/`](./backend/internal/oauth/)：GitHub OAuth、App JWT、installation token、PR comment、GraphQL apply suggestion。
 
-- **抽象层**：`internal/llm.Provider` 接口（`Complete` / `Stream`），运行时按 env 选；切换 Provider / 模型不改业务代码
-- **两个实现**：
-  - `mock` — 写死回复，不发网络请求；用于本地开发、CI、演示与 `OPENAI_API_KEY` 缺失时的兜底
-  - `openai` — 任意 OpenAI 兼容 endpoint（DeepSeek / OpenAI / Kimi / 通义），SSE 流式拉取
-- **默认 Provider**：DeepSeek `deepseek-chat`，理由：OpenAI 协议兼容 / 国内可达 / 单价低、上下文窗口 64k 足够覆盖三层裁剪
-- **按阶段差异化**（设计预留，v2 落地）：summary / suggestions 用便宜档（`deepseek-chat`）匹配生成型任务；risks 用 reasoner 档（`deepseek-reasoner`）匹配判断型任务。当前 v1 统一用 `deepseek-chat` 节省成本
-- **降级**：`LLM_PROVIDER=openai` 但 `OPENAI_API_KEY` 缺失时，启动期日志告警并自动切回 `mock`，演示永不开天窗
+前端：
 
-## 🔍 上下文获取策略
+- [`frontend/app/(main)/page.tsx`](./frontend/app/(main)/page.tsx)：首页、登录门槛和 PR URL 入口。
+- [`frontend/app/review/[id]/page.tsx`](./frontend/app/review/[id]/page.tsx)：流式评审和缓存详情共用的评审页。
+- [`frontend/components/review/`](./frontend/components/review/)：报告、diff、会话、行内建议、追问抽屉。
+- [`frontend/lib/sse.ts`](./frontend/lib/sse.ts)：POST + SSE 的客户端解析。
 
-题目要求"说明上下文获取方式"，核心思路：**评审质量 ≈ 上下文质量**，diff hunk 远远不够。本项目按三层裁剪 + 显式预算管理，避免 prompt 爆炸又留住信号。
+## 模型选择
 
-| 层级 | 来源 | 用途 | 默认预算 |
-|---|---|---|---|
-| **L1** | PR meta + diff hunk | 最低保证，永远完整保留 | 40% |
-| **L2** | 变更文件全文 / 受影响函数 | 让模型理解"改的这块在整体里干嘛" | 50% |
-| **L3** | 项目约定文件（README / CONTRIBUTING / CLAUDE.md） | 风格契合 / 命名规范 / 提交习惯 | 10% |
-| L4 *(v3)* | 跨文件 def/ref RAG 检索 | 解决"我改的函数在别处被怎么调用" | 异步索引后启用 |
+LLM 抽象在 `backend/internal/llm.Provider`，当前只有一个核心方法：`Stream(ctx, Request)`。业务层只依赖这个接口，不直接依赖 DeepSeek 或 OpenAI SDK。
 
-**算法**：`internal/prctx.LayeredBuilder`（`backend/internal/prctx/layered.go`）
+当前实现有两个 provider：
 
-1. 先估 L1 token 数 (`estimateTokens(s) = len(s) / 3`，按 OpenAI tokenizer 实际比近似)
-2. L3 按 `TokenLimit / 10` 分配，超额按字符截断
-3. L2 拿到 `TokenLimit - L1 - L3`，按文件大小排序后逐文件填，直到预算耗尽；放不下的文件路径进 `BudgetReport.Dropped`
-4. **floor 保护**：L2 至少留 `floorL2Tokens`（默认 1500），避免 L1 / L3 把 L2 挤光
-5. 返回 `Context{L1Str, L2Files, L3Str, BudgetReport}`，三阶段 LLM 调用复用同一份
+- `mock`：默认值，不发网络请求，按词流式返回固定 markdown。适合验证服务能启动、SSE 能通、前端能渲染。
+- `openai`：调用 OpenAI-compatible `/v1/chat/completions`。`OPENAI_BASE_URL`、`OPENAI_API_KEY`、`LLM_MODEL` 决定具体模型和供应商。
 
-**压缩顺序**：L3 → L2 → L1。L1 是最后被砍的（diff hunk 一旦丢失评审就无意义）。
+生产默认配置倾向 DeepSeek `deepseek-chat`，原因比较实际：OpenAI 协议兼容，国内网络可达性好，成本低，上下文窗口也够当前分层裁剪使用。代码没有把 DeepSeek 写死，换模型只改环境变量。
 
-## 🛣️ 未来扩展
+三个 stage 对模型能力的要求不同：
 
-1. **多模型 A/B 对比**：同 PR 跑多模型，结果并排展示
-2. **GitHub App 化**：从 Web 工具升级为 PR 自动评论 bot（webhook + Installation token + sticky comment 回灌）
-3. **代码库 RAG（异步索引）**：跨文件检索定义补全 L4 上下文，借鉴 Greptile；首次评审同步跑 L1-L3 即返，索引任务投递消息队列由后台 worker 处理（embedding 全仓 ~分钟级），第二次评审起命中 RAG；MQ 选型 v3 用 Redis Streams 或嵌入式 NATS，不破坏 SSE 流式体验
-4. **多 agent 自验证**：风险识别二次校验过滤误报，借鉴 Anthropic Claude Code Review
-5. **自定义规则注入**：用户上传 review 规范文档，挂到 L3 与 risks/suggestions prompt 之间
-6. **真部署**：v1 SQLite/内存 → PG/Redis；PAT → OAuth 登录；store seam 已设计成 Interface 可切换
-7. **agent 工具调用版**：从一次 fan-out 升级为多轮 tool-using（grep / read_file / list_dir），可观察、可引导
+- `summary` 是流式 markdown 生成，优先看稳定性和速度。
+- `risks` 和 `suggestions` 要求 JSON 输出。代码用 `response_format: json_object` 约束格式，然后在后端解析失败时发 `error` SSE event。
+- 代码层面 `SummaryStage`、`RisksStage`、`SuggestionsStage` 都预留了 `Model` 字段，可按 stage 覆盖模型；当前 main 里没有做 per-stage 路由，统一走 provider 默认模型。
 
-## 📦 依赖与原创说明
+Embedding 单独走 `index.Embedder`，不复用聊天模型。DeepSeek 目前没有 embedding API，所以真实 RAG 默认建议 `text-embedding-3-small` 或其他 OpenAI-compatible embedding 服务。没有 key 时降级 mock embedder，服务不断，但召回质量不可用于判断评审效果。
 
-> 题目合规要求
+## 上下文获取
 
-### 第三方依赖
+这个项目的核心判断是：评审质量主要取决于上下文，而不是单纯把 diff 丢给模型。
 
-**后端（Go）**
+当前上下文分四层：
 
-- `github.com/gin-gonic/gin` — HTTP 路由 + 中间件
-- `github.com/google/go-github/v66` — GitHub REST 客户端
-- `github.com/mattn/go-sqlite3` — 评审记录缓存
-- `github.com/oklog/ulid/v2` — 评审记录 ID（时间排序，比 UUID 短 10 字符）
-- `github.com/caarlos0/env/v11` — 环境变量加载（带类型 / tag 校验）
-- `github.com/joho/godotenv` — `.env` 文件加载
+| 层 | 来源 | 当前实现 |
+|---|---|---|
+| L1 | PR meta | 标题、正文、作者、标签、分支、文件统计、CI checks、每个文件的增删行 |
+| L2 | PR diff | 每个改动文件的 patch hunk；当前不拉完整文件全文 |
+| L3 | 项目约定 | PR head 上的 `README.md`、`CONTRIBUTING.md`、`CLAUDE.md` 或 `AGENTS.md` |
+| L4 | RAG 引用 | SQLite 中同一 `owner/repo` scope 下的代码 chunk，来自离线索引或过去评审写入的 PR hunk |
 
-**前端（TypeScript / pnpm）**
+预算逻辑在 [`backend/internal/prctx/layered.go`](./backend/internal/prctx/layered.go)：
 
-- `next` 15 + `react` 19 — App Router + Server / Client Components
-- `tailwindcss` v4 + `@tailwindcss/postcss` — 样式（`@theme` 直接定义 tokens）
-- `lucide-react` — 图标（替代手写 SVG）
-- `class-variance-authority` + `clsx` + `tailwind-merge` — 组件变体系统
-- `highlight.js` — 50+ 语言语法高亮（diff 视图）
-- `react-markdown` + `remark-gfm` — Markdown 渲染（summary / risks reason）
-- `react-diff-viewer-continued` — diff 视图基础
+- 默认 token limit 是 48000，按字符数粗估 token。
+- L1 永远保留；如果 L1 自己超过上限，直接返回错误。
+- L3 默认拿 10% 预算，并且单个约定文件拉取时先限制在 16KB。
+- L4 默认拿 20% 预算，仅在 retriever 不是 `NoopRetriever` 时启用。
+- L2 使用剩余预算，并保留 1000 token floor，避免被 L3 或 L4 挤空。
+- 超预算文件会进入 `BudgetReport.Dropped`，前端会收到 `budget_report`。
 
-### 原创部分
+L4 不是盲目把检索结果塞进 prompt：
 
-以下均为本项目原创：
+- scope 是 `owner/repo`，避免跨仓库串数据。
+- 当前 PR 已经在 L2 的文件会从 L4 里跳过，减少重复。
+- 默认召回 top 4，低于 cosine `0.35` 的结果会过滤掉。
+- `summary` 默认用 PR meta 做 query；`risks` 会用偏 bug、安全、并发、资源泄漏的 query；`suggestions` 会用偏重构、性能、可读性的 query。
 
-- 全部 Go 业务代码（GitHub 抓取、三层上下文构建、并行调度、SSE 协议）
-- 三阶段 prompt 模板（`backend/internal/prompts/*.tmpl`，go:embed 进二进制）
-- 全部前端组件树（landing / history / review 三视图 + AgentSession 5 步时间线 + 设计 tokens）
-- token 预算裁剪策略（`LayeredBuilder` + `BudgetReport`）
-- 主语言检测（`detectPrimaryLang`，按文件数多数派 + lockfile 黑名单 + tie-break 字母序）
+Agent 追问也是同一套思路：先把 L1/L3/L4 注入 prompt，再让工具补充。内置工具分两层沙盒：
 
-### 参考与致谢
+- PR 沙盒：`read_file`、`list_dir`、`grep_patches` 只能读缓存的 PR 文件列表，逃出会被拒绝。
+- RAG 检索：`search_repo` 在 `owner/repo` scope 内调 `index.Retriever`，按 query 召回全仓 chunk，方便 agent 在「相关代码」段不够时换更精准的 query 再查一次。Retriever 缺失或 NoopRetriever 时该工具不注册，agent 仍可用前三件套。
 
-- [qodo-ai/pr-agent](https://github.com/qodo-ai/pr-agent) — 多阶段 prompt 设计思路
-- CodeRabbit — 严重度分级与行内 comment 排版灵感
-- [Greptile](https://www.greptile.com/) — 跨文件上下文检索（未来扩展方向）
-- Anthropic Claude Code Review — 多 agent 验证模式（未来扩展方向）
+构造点在 `backend/internal/api/steer.go` 的 `agent.RegisterDefaultsWithRAG`。
 
-> **没有任何代码片段是从上述项目直接拷贝的**；仅在架构和 prompt 拆分思路层面借鉴。
+## 部署
 
-## 👥 团队与分工
+推荐部署形态是 Fly.io 后端 + Vercel 前端：
 
-- 单人开发
+- 后端 Docker 镜像包含 `server` 和 `indexrepo` 两个二进制。
+- Fly volume 挂 `/data`，用于 SQLite 评审历史和 RAG DB。
+- 前端用 Next.js standalone 构建，Vercel 上通过 `BACKEND_URL` rewrite `/api/*` 到 Fly 后端。
+- SSE 不走 Vercel server function，而是浏览器经 rewrite 直连后端，避免边缘函数超时。
 
-## 📄 License
+最小部署命令可参考 [`docs/DEPLOY.md`](./docs/DEPLOY.md)。注意该文档有些说明沿用了早期阶段，遇到冲突时以 `backend/cmd/server/main.go`、`backend/fly.toml` 和本 README 为准。
+
+## 未来扩展方向
+
+- **更可靠的跨文件上下文**：当前 RAG 是文本 chunk + cosine。下一步更适合接 tree-sitter、LSP、调用图和类型信息，把“语义相近”升级成“真实引用关系”。
+- **异步索引和队列**：现在手动评审会同步写 PR hunk，容器启动可后台预索引。多租户后应把索引放到 worker，配 Redis Streams、Postgres job table 或队列服务，避免影响评审请求延迟。
+- **向量存储升级**：SQLite brute-force 对 demo 和小仓库够用；chunk 到万级以上可以换 sqlite-vss、pgvector 或 Qdrant。接口已经收敛在 `index.Retriever` 和 `index.Indexer`。
+- **按阶段模型路由**：summary、risk、suggestion 可以用不同模型和温度。风险判断阶段可尝试 reasoner 或二次验证模型，但需要评测集证明收益。
+- **评测 harness**：准备一批带 ground truth 的 PR，记录误报、漏报、建议可应用率、耗时和成本。没有评测就很难判断模型切换是否真的变好。
+- **Agent 工具扩展**：当前是 PR 沙盒三件套 + RAG `search_repo`。未来可以接符号定义、测试结果、CI 日志、远端文件读取（带白名单和 rate limit），但每个工具都要有权限边界和调用预算。
+- **GitHub App 产品化**：webhook 当前直接起 goroutine，失败只记日志。生产版需要队列、重试、幂等 key、sticky comment 更新、更多 slash command 和更清晰的安装状态。
+- **多实例运行**：PostgresStore、RedisCache 已经实现。进一步需要补迁移策略、备份、指标、配额和按用户/组织的可见性模型。
+
+## 第三方依赖
+
+后端：
+
+- `gin-gonic/gin`：HTTP 路由和中间件。
+- `google/go-github/v66`：GitHub REST API。
+- `mattn/go-sqlite3`：SQLite store 和 RAG DB。
+- `jackc/pgx/v5`：Postgres store。
+- `redis/go-redis/v9`：Redis cache。
+- `golang-jwt/jwt/v5`：GitHub App JWT。
+- `caarlos0/env/v11`、`joho/godotenv`：配置加载。
+- `getsentry/sentry-go`、OpenTelemetry：可观测性入口。
+
+前端：
+
+- `next` 16 + `react` 19。
+- `tailwindcss` v4。
+- `react-markdown` + `remark-gfm`。
+- `react-diff-viewer-continued`。
+- `highlight.js`。
+- `lucide-react`。
+- `class-variance-authority`、`clsx`、`tailwind-merge`。
+
+## 原创说明
+
+本项目的 Go 后端、前端组件、prompt 模板、SSE 协议、L1-L4 上下文预算、RAG 检索接线、GitHub App/OAuth 接线和 Agent 工具实现均为项目内实现。
+
+架构和产品形态参考过以下方向：
+
+- qodo-ai/pr-agent：多阶段评审拆分。
+- CodeRabbit：风险分级和行内 review comment 形态。
+- Greptile：跨文件上下文检索。
+- Anthropic Claude Code Review：多轮验证和工具化 reviewer 的方向。
+
+## License
 
 [MIT](./LICENSE)
+
+开发者：[@ecstasoy](https://github.com/ecstasoy) 和 [@Claude](https://github.com/claude)。
