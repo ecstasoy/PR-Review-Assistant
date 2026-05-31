@@ -122,18 +122,25 @@ func countRisksBySeverity(raw json.RawMessage) riskCounts {
 // ListReviews GET /api/reviews?limit=N — 历史评审列表，按 created_at DESC。
 // 未配 Store 时返 503 而非 200 空列表，让前端能区分"没有历史"和"功能未启用"。
 // 可见性：
-//   - 匿名访客 → 返 user_id IS NULL 的（v1 遗留公开记录）
-//   - 已登录用户 → 返自己创建的 + 匿名遗留；他人创建的不返
+//   - 必须登录（匿名访客 401）
+//   - 已登录用户 → 返自己创建的 + 匿名遗留（v1 旧 NULL user_id 兼容）
 func ListReviews(d Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if d.Store == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "history disabled: store not configured"})
 			return
 		}
+		// 强制登录：列表里有其他用户评的 PR 内容（含 repo/title/risk 等），不应对匿名暴露
+		// 仅 OAuth 配置时启用 gate（与 PostReview 一致；dev / unit tests 无 Sessions 时仍开放）
+		s := CurrentSession(c)
+		if d.Sessions != nil && s == nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "请先登录后查看评审历史"})
+			return
+		}
 		limit := parseLimit(c.Query("limit"))
 		ctx := c.Request.Context()
 
-		// 先拿匿名遗留（user_id IS NULL）
+		// 拿匿名遗留（user_id IS NULL）—— v1 兼容 + dev 模式
 		pub, err := d.Store.List(ctx, nil, limit)
 		if err != nil {
 			slog.Error("list reviews (public)", "err", err)
@@ -141,8 +148,8 @@ func ListReviews(d Deps) gin.HandlerFunc {
 			return
 		}
 		records := pub
-		// 登录用户：再拿自己的
-		if s := CurrentSession(c); s != nil {
+		// 登录用户：union 自己创建的
+		if s != nil {
 			mine, err := d.Store.List(ctx, &s.Login, limit)
 			if err != nil {
 				slog.Warn("list reviews (mine) failed; returning public only", "err", err)

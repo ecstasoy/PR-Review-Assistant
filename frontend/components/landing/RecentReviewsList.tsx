@@ -131,13 +131,18 @@ function RecentRow({
     >
       <Link
         href={`/review/${item.id}`}
-        className="flex flex-1 items-center gap-3 px-3.5 py-2.5"
+        className="flex min-w-0 flex-1 items-center gap-3 px-3.5 py-2.5"
       >
         <CIStatus status={item.ci || "pending"} />
-        <code className="shrink-0 font-mono text-xs text-text-2">
+        {/* owner/repo#pr 长名（如 freeCodeCamp/freeCodeCamp）也截断，避免挤掉标题 */}
+        <code
+          className="max-w-[180px] shrink-0 truncate font-mono text-xs text-text-2"
+          title={`${item.owner}/${item.repo}#${item.pr}`}
+        >
           {item.owner}/{item.repo}#{item.pr}
         </code>
-        <span className="flex-1 truncate text-sm text-text">
+        {/* title flex-1 + min-w-0 才能让 truncate 真的截（flex 子项默认 min-width: auto 防截断）*/}
+        <span className="min-w-0 flex-1 truncate text-sm text-text" title={item.title}>
           {item.title || "(未命名)"}
         </span>
         {item.source === "webhook" ? (
