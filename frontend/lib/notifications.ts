@@ -15,9 +15,14 @@ export interface Notification {
 }
 
 // useNotifications 轮询拉新 webhook 通知
-// since 维护：每次拉到后记最新 id，下次只拉更新的，避免重复弹 toast
 //
-// 仅在用户登录后开始轮询（依赖 cookie；未登录返空）
+// 首次 tick：静默 baseline —— 只把当前最新条目 ID 记到 sinceRef，**不**推到 newOnes 弹 toast
+// 后续 tick：只拉 since 之后的，真正"新到"的弹 toast
+//
+// 目的：刷新页面 / 关 tab 重开不再把过去 7 天积压的通知一次性灌成 toast 雪崩
+// 代价：用户离开页面期间到的通知，再回来不显示（除非装 localStorage 持久 sinceRef，本期未做）
+//
+// 仅在用户登录后开始轮询（依赖 cookie；未登录后端返空）
 // 后续可改 SSE/WebSocket 推送；当前 15s 轮询足够 demo
 export function useNotifications(intervalMs = 15000): {
   newOnes: Notification[];
@@ -25,7 +30,7 @@ export function useNotifications(intervalMs = 15000): {
 } {
   const [newOnes, setNewOnes] = useState<Notification[]>([]);
   const sinceRef = useRef<string | null>(null);
-  // 用 ref 防 effect 闭包陷阱
+  const initialBaselineRef = useRef<boolean>(true); // 首次 tick 标记，仅记 baseline 不弹
   const intervalRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -41,16 +46,27 @@ export function useNotifications(intervalMs = 15000): {
         });
         if (!res.ok) return;
         const list = (await res.json()) as Notification[];
-        if (cancelled || list.length === 0) return;
-        // 列表是后端按时间倒序；最新的在 [0]
+        if (cancelled) return;
+
+        // 首次 tick：只记 baseline，不弹（防刷新雪崩）
+        if (initialBaselineRef.current) {
+          initialBaselineRef.current = false;
+          if (list.length > 0) {
+            sinceRef.current = list[0].id;
+          }
+          return;
+        }
+
+        if (list.length === 0) return;
+        // 列表后端按时间倒序；最新的在 [0]
         sinceRef.current = list[0].id;
         setNewOnes((prev) => [...list, ...prev]);
       } catch {
-        // 网络挂了 / 未登录返 200 空；安静失败
+        // 网络挂 / 未登录返 200 空；安静失败
       }
     }
 
-    // 立刻拉一次拿到 baseline since（避免上线后被旧通知淹没）
+    // 立刻 tick 一次拿 baseline（不弹任何 toast）
     void tick();
     intervalRef.current = window.setInterval(tick, intervalMs);
 
