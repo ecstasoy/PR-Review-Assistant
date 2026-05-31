@@ -160,14 +160,21 @@ func PostSteer(d Deps) gin.HandlerFunc {
 
 		// mode=agent：跑 ReAct loop + 工具调用；通过 WireAgentSSE 自动推 tool_call_start/done 帧
 		if mode == "agent" {
+			reg := agent.NewRegistry()
+			scope := pr.Owner + "/" + pr.Repo
+			agent.RegisterDefaultsWithRAG(reg, p.Files, d.Retriever, scope)
+
+			toolList := "read_file / list_dir / grep_patches"
+			hasSearchRepo := false
+			if _, ok := reg.Lookup("search_repo"); ok {
+				toolList += " / search_repo"
+				hasSearchRepo = true
+			}
 			writeSSE(c.Writer, "info", map[string]string{
-				"message": "Agent 启动：可调用 read_file / list_dir / grep_patches 工具深挖",
+				"message": "Agent 启动：可调用 " + toolList + " 工具深挖",
 				"stage":   "agent",
 			})
 			c.Writer.Flush()
-
-			reg := agent.NewRegistry()
-			agent.RegisterDefaults(reg, p.Files)
 
 			a := &agent.Agent{
 				Provider: d.Provider,
@@ -177,16 +184,19 @@ func PostSteer(d Deps) gin.HandlerFunc {
 			WireAgentSSE(a, c.Writer)
 
 			// 强引导：L4 already has RAG context → 优先据此直答，避免无脑调工具空转
-			// 工具沙盒只让访问本 PR 改动文件，跨文件问题工具没用，必须靠 L4
+			// PR 沙盒工具 + 可选 search_repo（按 retriever 注入情况浮动）
 			sysPrompt := "你是 code reviewer agent。回答 PR 相关问题。\n\n" +
 				"## 关键：先看「相关代码」段\n" +
 				"prompt 末尾「## 相关代码（跨文件 RAG 召回）」段已是基于用户问题语义召回的本仓库相关代码（可能来自本 PR 也可能来自 main 上未在本 PR 改动的文件）。" +
 				"**如果该段已包含足以回答问题的内容，直接基于它给答案，不要调工具。**\n\n" +
-				"## 工具仅用于深挖本 PR 改动\n" +
-				"`read_file` / `list_dir` / `grep_patches` 只能访问**本 PR 的改动文件**。" +
-				"跨文件 / main 分支已有代码请用「相关代码」段，不要试图用工具访问（会被沙盒拒绝）。\n\n" +
-				"## 输出\n" +
-				"用一段简洁中文文字回答（不要 JSON）。优先引用「相关代码」中具体文件路径 + 行为，让读者能直接定位。"
+				"## 工具\n" +
+				"- `read_file` / `list_dir` / `grep_patches`：仅限**本 PR 改动文件**沙盒，跨出会被拒绝。"
+			if hasSearchRepo {
+				sysPrompt += "\n" +
+					"- `search_repo`：在全仓 RAG 索引按 query 语义检索。**只在「相关代码」段不够回答时**才调，并换一个更精准的 query（如具体函数名 / 模块名），避免与初始召回重复。"
+			}
+			sysPrompt += "\n\n## 输出\n" +
+				"用一段简洁中文文字回答（不要 JSON）。优先引用具体文件路径 + 行为，让读者能直接定位。"
 			userPrompt := buildAgentUserPrompt(pr, text, pCtx)
 
 			result, err := a.Run(ctx, llm.Request{System: sysPrompt, User: userPrompt})
