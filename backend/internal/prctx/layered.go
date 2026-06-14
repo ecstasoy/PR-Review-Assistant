@@ -20,6 +20,10 @@ const (
 	// floorL2Tokens L2 至少保留的预算，避免大 L3 / L1 / L4 把 L2 挤光
 	floorL2Tokens = 1000
 
+	// maxL1Files L1 逐行列出的文件上限；分页后大 PR 可能上千文件，
+	// 全列会让 L1 自身撑爆预算并 hard-error。超出只列前 N 个 + 省略计数。
+	maxL1Files = 300
+
 	// defaultRAGTopK 默认召回数；v3 调参可调
 	defaultRAGTopK = 4
 
@@ -249,7 +253,11 @@ func buildL1Meta(pr github.PullRequest) string {
 		fmt.Fprintf(&sb, "正文:\n%s\n", pr.Body)
 	}
 	fmt.Fprintf(&sb, "改动 %d 个文件：\n", len(pr.Files))
-	for _, f := range pr.Files {
+	for i, f := range pr.Files {
+		if i >= maxL1Files {
+			fmt.Fprintf(&sb, "- ……以及其余 %d 个文件（未逐一列出）\n", len(pr.Files)-maxL1Files)
+			break
+		}
 		fmt.Fprintf(&sb, "- %s (%s) +%d -%d\n", f.Path, f.Status, f.Additions, f.Deletions)
 	}
 	return sb.String()

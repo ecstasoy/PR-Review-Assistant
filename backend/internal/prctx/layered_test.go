@@ -2,6 +2,7 @@ package prctx
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -49,6 +50,39 @@ func TestLayered_BasicMeta(t *testing.T) {
 	if !strings.Contains(ctx.L1Meta, "- a.go (modified) +1 -1") {
 		t.Errorf("L1 缺 per-file 统计: %q", ctx.L1Meta)
 	}
+}
+
+// 分页后大 PR 可能上千文件；L1 逐行列全部会自己撑爆预算并 hard-error。
+// L1 文件清单应封顶，Build 仍能成功（文件 patch 的裁剪由 L2 + Dropped 负责）。
+func TestLayered_ManyFiles_L1DoesNotOverflow(t *testing.T) {
+	b := NewLayeredBuilder() // 默认 48000
+	files := make([]github.File, 4000)
+	for i := range files {
+		files[i] = github.File{
+			Path:      fmt.Sprintf("internal/pkg/module/file_%04d.go", i),
+			Status:    "modified",
+			Patch:     "@@ -1 +1 @@\n-a\n+b",
+			Additions: 1,
+		}
+	}
+	ctx, err := b.Build(context.Background(), newPR(files))
+	if err != nil {
+		t.Fatalf("4000 文件不应让 L1 撑爆预算: %v", err)
+	}
+	// 文件总数仍要如实呈现，且 L1 不再逐行列全部
+	if !strings.Contains(ctx.L1Meta, "改动 4000 个文件") {
+		t.Errorf("L1 应保留真实文件总数: %q", firstN(ctx.L1Meta, 80))
+	}
+	if !strings.Contains(ctx.L1Meta, "未逐一列出") {
+		t.Errorf("L1 文件清单应封顶并标注省略: %q", firstN(ctx.L1Meta, 200))
+	}
+}
+
+func firstN(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
 }
 
 func TestLayered_PatchesFitInBudget(t *testing.T) {

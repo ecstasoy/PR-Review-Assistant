@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -12,6 +13,21 @@ import (
 	"testing"
 	"time"
 )
+
+// makeFiles 造 n 条假 PR 文件，供分页测试用。
+func makeFiles(prefix string, n int) []map[string]any {
+	out := make([]map[string]any, 0, n)
+	for i := range n {
+		out = append(out, map[string]any{
+			"filename":  fmt.Sprintf("%s%d.go", prefix, i),
+			"status":    "modified",
+			"patch":     "@@ -1 +1 @@\n-a\n+b",
+			"additions": 1,
+			"deletions": 0,
+		})
+	}
+	return out
+}
 
 // stubServer 起一个 httptest server，go-github 客户端 BaseURL 指向这里
 func stubServer(t *testing.T, handler http.Handler) (*RealFetcher, func()) {
@@ -256,6 +272,39 @@ func TestRealFetcher_Fetch_AttachesConventions(t *testing.T) {
 	}
 	if got.Conventions.Contributing != "" || got.Conventions.AgentDocs != "" {
 		t.Errorf("缺失文件应留空：%+v", got.Conventions)
+	}
+}
+
+func TestRealFetcher_Fetch_PaginatesFiles(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/o/r/pulls/1", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"title": "big PR",
+			"head":  map[string]any{"sha": "0"},
+		})
+	})
+	mux.HandleFunc("/repos/o/r/pulls/1/files", func(w http.ResponseWriter, r *http.Request) {
+		// 第一页满 100 条 + Link rel=next 指向第二页；第二页 30 条无 Link 终止
+		if page := r.URL.Query().Get("page"); page == "" || page == "1" {
+			w.Header().Set("Link", fmt.Sprintf(`<%s?page=2>; rel="next"`, r.URL.Path))
+			_ = json.NewEncoder(w).Encode(makeFiles("p1-", 100))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(makeFiles("p2-", 30))
+	})
+
+	f, cleanup := stubServer(t, mux)
+	defer cleanup()
+
+	got, err := f.Fetch(context.Background(), "https://github.com/o/r/pull/1")
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if len(got.Files) != 130 {
+		t.Fatalf("Files 数量 = %d，期望 130（分页应跟到第二页）", len(got.Files))
+	}
+	if got.Files[0].Path != "p1-0.go" || got.Files[129].Path != "p2-29.go" {
+		t.Errorf("分页顺序错: 首=%q 尾=%q", got.Files[0].Path, got.Files[129].Path)
 	}
 }
 

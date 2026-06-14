@@ -8,6 +8,9 @@ import (
 	gh "github.com/google/go-github/v66/github"
 )
 
+// maxFilePages 文件列表分页上限；GitHub 单 PR 文件列表本身封顶 3000，30 页兜底防异常分页死循环。
+const maxFilePages = 30
+
 // RealFetcher 通过 go-github 调 GitHub REST。
 type RealFetcher struct {
 	client *gh.Client
@@ -37,9 +40,20 @@ func (f *RealFetcher) Fetch(ctx context.Context, rawURL string) (PullRequest, er
 		return PullRequest{}, fmt.Errorf("get pull request: %w", classifyGitHubError(err))
 	}
 
-	files, _, err := f.client.PullRequests.ListFiles(ctx, owner, repo, number, &gh.ListOptions{PerPage: 100})
-	if err != nil {
-		return PullRequest{}, fmt.Errorf("list pull request files: %w", classifyGitHubError(err))
+	// 分页拉全部改动文件；只取第一页会让 >100 文件的大 PR 静默丢文件。
+	// 超预算的裁剪交给 prctx 层，并通过 BudgetReport.Dropped 显式上报。
+	var files []*gh.CommitFile
+	opt := &gh.ListOptions{PerPage: 100}
+	for range maxFilePages {
+		batch, resp, err := f.client.PullRequests.ListFiles(ctx, owner, repo, number, opt)
+		if err != nil {
+			return PullRequest{}, fmt.Errorf("list pull request files: %w", classifyGitHubError(err))
+		}
+		files = append(files, batch...)
+		if resp.NextPage == 0 {
+			break
+		}
+		opt.Page = resp.NextPage
 	}
 
 	// state 在 GitHub 是 open/closed 二值，merged 单独用 boolean 标识；
