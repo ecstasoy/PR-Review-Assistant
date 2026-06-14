@@ -320,6 +320,7 @@ function ReviewDetailPageContent({ id }: { id: string }) {
                 risksDone={risksDone}
                 streaming={streaming}
                 stageErrors={stageErrors}
+                budget={budget}
                 onPickRisk={pickRisk}
               />
             ) : view === "diff" ? (
@@ -418,6 +419,7 @@ function ReportContent({
   risksDone,
   streaming,
   stageErrors,
+  budget,
   onPickRisk,
 }: {
   summary: string;
@@ -426,10 +428,13 @@ function ReportContent({
   risksDone: boolean;
   streaming: boolean;
   stageErrors: StageErrors;
+  budget: BudgetReport | null;
   onPickRisk: (r: Risk) => void;
 }) {
+  const dropped = budget?.dropped ?? [];
   return (
     <>
+      {dropped.length > 0 ? <DroppedFilesNotice files={dropped} /> : null}
       {stageErrors.summary ? (
         <StageErrorBanner stage="总结" message={stageErrors.summary} />
       ) : (
@@ -445,6 +450,24 @@ function ReportContent({
         <p className="text-sm text-faint">扫描风险中…</p>
       ) : null}
     </>
+  );
+}
+
+// DroppedFilesNotice 大 PR 超 token 预算丢文件时，在报告顶部声明评审范围不完整
+function DroppedFilesNotice({ files }: { files: string[] }) {
+  const shown = files.slice(0, 8);
+  const rest = files.length - shown.length;
+  return (
+    <div className="rounded-md border border-high-bd bg-high-bg px-3 py-2 text-sm text-high">
+      <div className="font-medium">
+        {files.length} 个文件因体积超出预算，未纳入本次评审
+      </div>
+      <div className="mt-1 break-all font-mono text-[12px] text-text-2">
+        {shown.join(" · ")}
+        {rest > 0 ? ` …+${rest} 个` : ""}
+      </div>
+      <div className="mt-1 text-[12px] text-muted">摘要、风险与建议均不覆盖以上文件。</div>
+    </div>
   );
 }
 
