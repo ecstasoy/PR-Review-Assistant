@@ -67,3 +67,16 @@
 - 每条建议要能直接照搬到 GitHub PR review comment
 - `patch.before` / `patch.after` 是**代码片段**，不是整个文件
 - 聚焦"怎么改"，不要长篇 rationale
+
+不要建议（避免噪音 / 危险改写）：
+- 不要给破坏性或改变语义的改写：删错误处理、吞异常、改公开签名 / 默认行为。
+- `patch.after` 必须语法正确，且与 `before` 功能等价（除非本身就是在修 bug）。
+- 不要纯风格 / 重命名 / 加注释这类无实质收益的建议。
+- 不要对没拿到 diff 的文件提建议——没有 diff 无法定位行号。
+
+示例（仅示意输出口径，不要照抄内容）：
+```json
+{"suggestions":[
+  {"file":"api/server.go","line":88,"type":"concurrency","title":"写 conns 前加锁","body":"s.conns 被多 goroutine 并发写，需用 s.mu 保护，否则触发并发写 panic","patch":{"lang":"go","before":"s.conns[id] = c","after":"s.mu.Lock()\ns.conns[id] = c\ns.mu.Unlock()"}}
+]}
+```

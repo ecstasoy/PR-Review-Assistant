@@ -65,15 +65,23 @@ export function SeverityBadge({
 }
 
 // ── 类别徽章 ──────────────────────────────────────────────
-// bug / security / concurrency 高严重度（红）
+// bug / security / concurrency / breaking 高严重度（红）
 // perf 中（amber）
 // style / other 低（zinc）
-export type Category = "bug" | "security" | "concurrency" | "perf" | "style" | "other";
+export type Category =
+  | "bug"
+  | "security"
+  | "concurrency"
+  | "breaking"
+  | "perf"
+  | "style"
+  | "other";
 
 const categoryClass: Record<Category, string> = {
   bug: "border-high-bd bg-high-bg text-high",
   security: "border-high-bd bg-high-bg text-high",
   concurrency: "border-high-bd bg-high-bg text-high",
+  breaking: "border-high-bd bg-high-bg text-high",
   perf: "border-med-bd bg-med-bg text-med",
   style: "border-low-bd bg-low-bg text-low",
   other: "border-border bg-surface-2 text-muted",

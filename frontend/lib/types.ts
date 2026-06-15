@@ -5,7 +5,7 @@ export interface Risk {
   file: string;
   line?: number;
   severity: "high" | "medium" | "low";
-  category: "bug" | "security" | "perf" | "style" | "concurrency" | "other";
+  category: "bug" | "security" | "perf" | "style" | "concurrency" | "breaking" | "other";
   confidence: number; // 0-1，LLM 自评把握度；≥ 0.9 默认展开
   reason: string;
 }

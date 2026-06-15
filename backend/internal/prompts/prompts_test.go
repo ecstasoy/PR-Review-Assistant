@@ -53,3 +53,46 @@ func TestTemplates_OmitDroppedSectionWhenEmpty(t *testing.T) {
 		}
 	}
 }
+
+func minimalCtx() prctx.Context {
+	return prctx.Context{
+		L1Meta:  "仓库: o/r#1",
+		L2Files: []prctx.FileContext{{Path: "a.go", Patch: "@@ -1 +1 @@"}},
+	}
+}
+
+// few-shot：risks / suggestions 必须带具体示例，降低模型瞎猜 schema 与口径。
+func TestTemplates_HaveFewShotExamples(t *testing.T) {
+	for _, name := range []string{"risks.tmpl", "suggestions.tmpl"} {
+		out := render(t, name, minimalCtx())
+		if !strings.Contains(out, "示例") {
+			t.Errorf("%s 缺少 few-shot 示例段", name)
+		}
+	}
+}
+
+// 误报护栏：risks 必须明确「不要报告」的清单，降低误报。
+func TestRisksTemplate_HasFalsePositiveGuardrails(t *testing.T) {
+	out := render(t, "risks.tmpl", minimalCtx())
+	if !strings.Contains(out, "不要报告") {
+		t.Errorf("risks.tmpl 缺少误报护栏（不要报告 清单）:\n%s", out)
+	}
+}
+
+// 建议护栏：suggestions 不得给破坏性 / 改变语义的改写。
+func TestSuggestionsTemplate_HasGuardrails(t *testing.T) {
+	out := render(t, "suggestions.tmpl", minimalCtx())
+	if !strings.Contains(out, "不要建议") {
+		t.Errorf("suggestions.tmpl 缺少建议护栏:\n%s", out)
+	}
+}
+
+// 新增评审维度：破坏性变更类别 + 测试缺口 + PR 描述对齐。
+func TestRisksTemplate_CoversNewDimensions(t *testing.T) {
+	out := render(t, "risks.tmpl", minimalCtx())
+	for _, want := range []string{"breaking", "破坏性", "测试", "描述"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("risks.tmpl 缺少维度关键词 %q", want)
+		}
+	}
+}
