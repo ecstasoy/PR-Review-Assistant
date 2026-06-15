@@ -45,7 +45,7 @@ export function ReviewTopBar({
 }: Props) {
   const githubURL = `https://github.com/${pr.owner}/${pr.repo}/pull/${pr.pr}`;
   return (
-    <header className="flex h-[52px] flex-shrink-0 items-center gap-3 border-b border-border bg-surface px-3.5">
+    <header className="flex h-[52px] flex-shrink-0 items-center gap-2 border-b border-border bg-surface px-3 sm:gap-3 sm:px-3.5">
       <Link href="/" className="flex items-center" aria-label="LGTM 首页">
         <BrandMark size={24} variant="icon" />
       </Link>
@@ -68,7 +68,7 @@ export function ReviewTopBar({
             {pr.title}
           </span>
         </div>
-        <div className="flex items-center gap-2 font-mono text-[11px] text-muted">
+        <div className="hidden items-center gap-2 font-mono text-[11px] text-muted sm:flex">
           <span>
             {pr.owner}/{pr.repo}
             <span className="text-faint">#{pr.pr}</span>
@@ -91,7 +91,7 @@ export function ReviewTopBar({
       <ViewSwitch view={view} />
 
       {view !== "session" ? (
-        <div className="flex items-center gap-3.5 pr-1.5 pl-3">
+        <div className="hidden items-center gap-3.5 pr-1.5 pl-3 lg:flex">
           <StageChip label="总结" state={stageStates.summary} />
           <StageChip label="风险" state={stageStates.risks} />
           <StageChip label="建议" state={stageStates.suggestions} />
@@ -106,7 +106,7 @@ export function ReviewTopBar({
         className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-border-strong bg-surface px-2.5 text-xs text-text-2 hover:bg-surface-hover hover:text-text"
       >
         <ExternalLink className="h-3 w-3" />
-        查看原 PR
+        <span className="hidden sm:inline">查看原 PR</span>
       </a>
       <button
         type="button"
@@ -138,7 +138,7 @@ function ViewSwitch({ view }: { view: ViewKey }) {
     { key: "session", label: "会话", icon: Sparkle },
   ];
   return (
-    <div className="flex gap-[3px] rounded-md border border-border bg-surface-2 p-[3px]">
+    <div className="flex shrink-0 gap-[3px] rounded-md border border-border bg-surface-2 p-[3px]">
       {items.map(({ key, label, icon: Icon }) => {
         const active = key === view;
         const params = new URLSearchParams(searchParams.toString());
@@ -149,7 +149,7 @@ function ViewSwitch({ view }: { view: ViewKey }) {
             href={`${pathname}?${params.toString()}`}
             scroll={false}
             className={cn(
-              "inline-flex items-center gap-1.5 rounded-sm px-2.5 py-1 text-xs font-medium transition-colors",
+              "inline-flex items-center gap-1.5 whitespace-nowrap rounded-sm px-2 py-1 text-xs font-medium transition-colors",
               active
                 ? "bg-surface text-text shadow-sm"
                 : "text-muted hover:text-text",
