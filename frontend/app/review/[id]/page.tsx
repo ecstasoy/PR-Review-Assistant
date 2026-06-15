@@ -8,6 +8,7 @@ import remarkGfm from "remark-gfm";
 
 import { getReview } from "@/lib/api";
 import { streamReview } from "@/lib/sse";
+import { friendlyError } from "@/lib/errors";
 import type { BudgetReport, File, PrMeta, Risk, ReviewDetail, Suggestion } from "@/lib/types";
 import { ReviewTopBar, type ViewKey } from "@/components/review/ReviewTopBar";
 import { Sidebar } from "@/components/review/Sidebar";
@@ -76,6 +77,8 @@ function ReviewDetailPageContent({ id }: { id: string }) {
   const [stageErrors, setStageErrors] = useState<StageErrors>({});
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  // retryNonce 递增即重跑取数 effect；流式失败 / 超时后「重试」按钮用
+  const [retryNonce, setRetryNonce] = useState(0);
 
   const [agentOpen, setAgentOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -178,7 +181,25 @@ function ReviewDetailPageContent({ id }: { id: string }) {
       cancelled = true;
       controller?.abort();
     };
-  }, [id, isStreaming, sourceURL]);
+  }, [id, isStreaming, sourceURL, retryNonce]);
+
+  // 重试：清掉错误与上一轮部分结果，bump retryNonce 触发取数 effect 重跑
+  const retry = useCallback(() => {
+    setError(null);
+    setLoaded(false);
+    setStreaming(isStreaming);
+    setSummary("");
+    setRisks([]);
+    setSuggestions([]);
+    setFiles([]);
+    setBudget(null);
+    setInfo(null);
+    setStageErrors({});
+    setSummaryDone(false);
+    setRisksDone(false);
+    setSuggestionsDone(false);
+    setRetryNonce((n) => n + 1);
+  }, [isStreaming]);
 
   // stage 状态机：基于 summary 是否有内容 / risksDone / suggestionsDone / streaming
   const stageStates = useMemo<{
@@ -263,7 +284,14 @@ function ReviewDetailPageContent({ id }: { id: string }) {
         <Link href="/history" className="text-xs text-muted hover:text-text">
           ← 返回历史
         </Link>
-        <p className="text-sm text-fail">加载失败：{error}</p>
+        <p className="text-sm text-fail">{friendlyError(error)}</p>
+        <button
+          type="button"
+          onClick={retry}
+          className="rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-text transition-colors hover:bg-surface-hover"
+        >
+          重试
+        </button>
       </section>
     );
   }
