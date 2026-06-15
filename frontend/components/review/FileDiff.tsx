@@ -134,7 +134,7 @@ function DiffRow({
   return (
     <div
       className={cn(
-        "relative grid items-stretch leading-[20px] grid-cols-[44px_44px_18px_1fr] scroll-mt-20",
+        "relative grid items-stretch leading-[20px] grid-cols-[32px_32px_14px_1fr] scroll-mt-20 sm:grid-cols-[44px_44px_18px_1fr]",
         rowBg,
       )}
       id={anchorId}
