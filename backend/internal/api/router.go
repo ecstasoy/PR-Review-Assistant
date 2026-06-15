@@ -35,6 +35,9 @@ type Deps struct {
 	OAuthClient *oauth.Client
 	Sessions    *session.Manager
 	Memory      memory.SessionStore
+	// StageModels 按 stage name（summary/risks/suggestions）的模型覆盖；
+	// 空 map / 空值走 provider 默认（L1 按阶段模型路由）。
+	StageModels map[string]string
 }
 
 // RegisterWithSecret 同 Register 但接受 webhook secret 显式注入
