@@ -54,13 +54,34 @@
 
 字段约束：
 - `severity`: `high` | `medium` | `low`
-- `category`: `bug` | `security` | `perf` | `style` | `concurrency` | `other`
+- `category`: `bug` | `security` | `perf` | `style` | `concurrency` | `breaking` | `other`
 - `confidence`: 0.0-1.0 浮点，你对此判断的把握度（前端 ≥ 0.9 默认展开）
 - `reason`: 中文，≤ 80 字，聚焦"为什么是风险"
 - `line` 可选，不确定时省略
 
 判定原则：
-- **high**：可能崩溃 / 数据丢失 / 安全漏洞 / 严重性能退化
+- **high**：可能崩溃 / 数据丢失 / 安全漏洞 / 严重性能退化 / 破坏性接口变更
 - **medium**：会引发 bug 或维护成本
 - **low**：风格 / 可读性 / 次要建议
 - **宁可不报，不要乱报**：无明显风险时输出 `{"risks": []}`
+
+重点检查维度（命中才报，没有不要硬凑）：
+- **破坏性变更（breaking）**：删除 / 重命名导出符号、改函数签名或参数顺序、改公开 API / 配置 / DB schema —— 已有调用方会被波及。
+- **PR 描述对齐**：diff 是否夹带了 PR 标题 / 正文未提及的改动（范围蔓延），或正文承诺的改动并未实现。
+- **测试缺口**：新增 / 改动了有逻辑分支的代码，却没有对应的测试改动。
+- **依赖变更**：新增依赖、版本跳跃、lock 文件变化带来的兼容 / 供应链风险。
+
+不要报告（避免误报）：
+- 纯格式 / 缩进 / 空行，或自动生成 / lock 文件的体量变化。
+- 未改动的既有代码里的历史问题——只评审本次 diff。
+- "加个注释 / 换个更好的名字"这类无实质影响的偏好。
+- 没拿到 diff 的文件——只评审上文实际给出 diff 的文件。
+- 仅凭猜测、缺少 diff 证据支撑的风险。
+
+示例（仅示意输出口径与粒度，不要照抄内容）：
+```json
+{"risks":[
+  {"file":"api/server.go","line":88,"severity":"high","category":"concurrency","confidence":0.92,"reason":"多 goroutine 并发写 s.conns 这个 map 且无锁，会触发 fatal 并发写 panic"},
+  {"file":"pkg/client.go","line":12,"severity":"high","category":"breaking","confidence":0.85,"reason":"导出函数 NewClient 删掉了 timeout 参数，下游调用方会编译失败"}
+]}
+```
