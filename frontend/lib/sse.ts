@@ -32,6 +32,19 @@ export interface StreamCallbacks {
   onReviewID?: (id: string) => void;
 }
 
+// SSE_IDLE_TIMEOUT_MS 两帧之间的最长等待。summary 边生成边推帧，但 risks / suggestions
+// 在计算期间静默（算完才发一帧），所以放宽到 90s：既能兜住真正卡死的连接，又不误杀
+// 慢但正常的大 PR。超时后 page 显示可重试的超时提示，而非永远卡在「生成中」。
+const SSE_IDLE_TIMEOUT_MS = 90_000;
+
+// SSETimeoutError 流在 SSE_IDLE_TIMEOUT_MS 内无新帧；lib/errors friendlyError 据消息翻成中文。
+export class SSETimeoutError extends Error {
+  constructor() {
+    super("sse idle timeout");
+    this.name = "SSETimeoutError";
+  }
+}
+
 // SteerMode 决定 steer 端点跑哪条路径：
 //   - "stage"（默认）：重跑 risks / suggestions stage，结果替换前端 state（v2 行为）
 //   - "agent"：跑 agent.Run + ReAct loop + 工具调用，结果作 info 帧（A5）；前端会看到 tool_call 时间线步骤
@@ -96,7 +109,7 @@ async function consume(body: ReadableStream<Uint8Array>, cb: StreamCallbacks): P
 
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readWithIdleTimeout(reader, SSE_IDLE_TIMEOUT_MS);
       if (done) break;
       buf += decoder.decode(value, { stream: true });
 
@@ -110,7 +123,32 @@ async function consume(body: ReadableStream<Uint8Array>, cb: StreamCallbacks): P
       }
     }
   } finally {
-    reader.releaseLock();
+    // 超时 cancel 后底层 read() 可能仍 pending，releaseLock 会抛；忽略即可
+    try {
+      reader.releaseLock();
+    } catch {
+      /* noop */
+    }
+  }
+}
+
+// readWithIdleTimeout 给 reader.read() 套空闲超时：超过 ms 无新帧则 cancel 流并抛 SSETimeoutError。
+// cancel 让上游 fetch 连接尽快释放，避免卡死的连接挂着不收。
+async function readWithIdleTimeout(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  ms: number,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      void reader.cancel(new SSETimeoutError()).catch(() => {});
+      reject(new SSETimeoutError());
+    }, ms);
+  });
+  try {
+    return await Promise.race([reader.read(), timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
