@@ -2,6 +2,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -103,10 +104,12 @@ func main() {
 // buildDeps 按配置选 Provider；明示用户意图与最终走向，缺 key 显式 warn 而非静默降级。
 // Store 打开失败仅 warn，handler 已 nil-safe；缓存 + 历史功能降级停用而非整个服务挂。
 func buildDeps(cfg config.Config) api.Deps {
-	provider := pickProvider(cfg)
+	registry := buildRegistry(cfg)
+	defProvider, _ := registry.Default()
 	deps := api.Deps{
 		Fetcher:  gh.NewRealFetcher(cfg.GithubToken),
-		Provider: provider,
+		Provider: defProvider, // 注册表默认项；agent / 其它路径仍用它
+		Models:   registry,    // L2：按阶段 / 按请求经注册表解析 provider+model
 		// Builder 先占位 NewLayeredBuilder()，等下面构造完 retriever 后再用 WithRetriever 替换
 		Builder: prctx.NewLayeredBuilder(),
 		// 按阶段模型覆盖（L1）：空值走 provider 默认
@@ -233,6 +236,43 @@ func openSQLiteFallback(path string) store.Store {
 	}
 	slog.Info("store ready", "type", "sqlite", "path", path)
 	return s
+}
+
+// buildRegistry 构造 L2 具名模型注册表。
+//   - LLM_MODELS 为空 / 解析失败 → 单默认项（来自 LLM_PROVIDER/OPENAI_*/LLM_MODEL），等价 legacy 行为。
+//   - 否则按 JSON 数组逐项构造；每项 key 从 api_key_env 指定的环境变量取（缺 key 降级 mock，不阻塞启动）。
+func buildRegistry(cfg config.Config) *llm.Registry {
+	single := func() *llm.Registry {
+		prov := pickProvider(cfg)
+		return llm.NewRegistry([]llm.ModelProfile{{
+			Key: cfg.LLMModel, Label: cfg.LLMModel, Provider: prov, Model: cfg.LLMModel,
+		}}, cfg.LLMModel)
+	}
+
+	raw := strings.TrimSpace(cfg.LLMModels)
+	if raw == "" {
+		return single()
+	}
+	var mcs []config.ModelConfig
+	if err := json.Unmarshal([]byte(raw), &mcs); err != nil || len(mcs) == 0 {
+		slog.Error("解析 LLM_MODELS 失败，降级到单 provider", "err", err)
+		return single()
+	}
+	profiles := make([]llm.ModelProfile, 0, len(mcs))
+	for _, mc := range mcs {
+		key := os.Getenv(mc.APIKeyEnv)
+		var prov llm.Provider
+		if mc.APIKeyEnv == "" || key == "" {
+			slog.Warn("model profile 缺 api key，降级 mock", "key", mc.Key, "api_key_env", mc.APIKeyEnv)
+			prov = llm.NewMockProvider()
+		} else {
+			slog.Info("model profile ready", "key", mc.Key, "base", mc.BaseURL, "model", mc.Model)
+			prov = llm.NewOpenAIProvider(mc.BaseURL, key, mc.Model)
+		}
+		profiles = append(profiles, llm.ModelProfile{Key: mc.Key, Label: mc.Label, Provider: prov, Model: mc.Model})
+	}
+	slog.Info("model registry ready", "count", len(profiles), "default", profiles[0].Key)
+	return llm.NewRegistry(profiles, mcs[0].Key)
 }
 
 func pickProvider(cfg config.Config) llm.Provider {

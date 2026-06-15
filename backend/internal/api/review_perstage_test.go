@@ -34,7 +34,7 @@ func TestMergeStages_RoutesPerStageModels(t *testing.T) {
 	ctxByStage := map[string]prctx.Context{"summary": base, "risks": base, "suggestions": base}
 	stageModels := map[string]string{"summary": "m-sum", "risks": "m-risk", "suggestions": "m-sug"}
 
-	for range mergeStages(context.Background(), ctxByStage, p, stageModels) {
+	for range mergeStages(context.Background(), ctxByStage, p, nil, stageModels) {
 		// drain
 	}
 

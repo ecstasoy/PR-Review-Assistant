@@ -199,7 +199,7 @@ func PostReview(d Deps) gin.HandlerFunc {
 		// per-stage RAG query：risks/suggestions 重算 L4（用不同 query），summary 用 baseCtx
 		// 多两次 retrieve 调用换更对题的召回；首字节延迟代价 < 200ms
 		ctxByStage := buildPerStageContexts(ctx, builder, pr, pCtx)
-		merged := mergeStages(ctx, ctxByStage, d.Provider, d.StageModels)
+		merged := mergeStages(ctx, ctxByStage, d.Provider, d.Models, d.StageModels)
 
 		// 边推流边收集供后续 cache 写入；stage 任一报错则不写缓存（避免缓存半残结果）
 		var (
@@ -425,24 +425,22 @@ func newStage(name, model string) (review.Stage, bool) {
 // mergeStages 并发跑 summary + risks + suggestions，把各自的事件归并到一个 channel。
 // 任一 stage 失败会发一帧 error event 而非中止整条流。
 // ctxByStage 按 Stage.Name() 选 prctx.Context；缺失 key 回退到 ctxByStage["summary"]
-func mergeStages(ctx context.Context, ctxByStage map[string]prctx.Context, p llm.Provider, stageModels map[string]string) <-chan review.Event {
+func mergeStages(ctx context.Context, ctxByStage map[string]prctx.Context, def llm.Provider, models *llm.Registry, stageModels map[string]string) <-chan review.Event {
 	merged := make(chan review.Event, 16)
 	var wg sync.WaitGroup
 
-	// stageModels 可为 nil；nil map 取值得空串，等价于走 provider 默认模型
-	stages := []review.Stage{
-		review.SummaryStage{Model: stageModels["summary"]},
-		review.RisksStage{Model: stageModels["risks"]},
-		review.SuggestionsStage{Model: stageModels["suggestions"]},
-	}
+	// 每个 stage 经注册表解析自己的 (provider, model)；注册表为 nil 时回退默认 provider（兼容旧调用 / 测试）
+	names := []string{"summary", "risks", "suggestions"}
 	fallback := ctxByStage["summary"]
-	wg.Add(len(stages))
-	for _, s := range stages {
-		c, ok := ctxByStage[s.Name()]
+	wg.Add(len(names))
+	for _, name := range names {
+		prov, model := resolveProvider(def, models, stageModels[name])
+		stage, _ := newStage(name, model)
+		c, ok := ctxByStage[name]
 		if !ok {
 			c = fallback
 		}
-		go forwardStage(ctx, c, p, s, merged, &wg)
+		go forwardStage(ctx, c, prov, stage, merged, &wg)
 	}
 
 	go func() {
@@ -450,6 +448,15 @@ func mergeStages(ctx context.Context, ctxByStage map[string]prctx.Context, p llm
 		close(merged)
 	}()
 	return merged
+}
+
+// resolveProvider 选 stage 的 provider + model：注册表非 nil 时经它解析（支持跨供应商路由），
+// 否则回退默认 provider + 把 key 当原始模型名（L1 行为；注册表缺省 / 单元测试时兼容）。
+func resolveProvider(def llm.Provider, reg *llm.Registry, key string) (llm.Provider, string) {
+	if reg != nil {
+		return reg.Resolve(key)
+	}
+	return def, key
 }
 
 // forwardStage 跑一个 stage，把它的事件转发到 merged；ctx 取消时安全退出。

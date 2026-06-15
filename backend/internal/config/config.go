@@ -22,9 +22,13 @@ type Config struct {
 
 	// 按阶段模型路由（L1）：空串则该阶段回退到 LLMModel / provider 默认。
 	// 例：RISKS_MODEL=deepseek-reasoner 让风险阶段用推理模型，summary 仍走快模型。
+	// L2 注册表存在时，这里的值优先当注册表 key 解析；未命中再当原始模型名（见 llm.Registry.Resolve）。
 	SummaryModel     string `env:"SUMMARY_MODEL"`
 	RisksModel       string `env:"RISKS_MODEL"`
 	SuggestionsModel string `env:"SUGGESTIONS_MODEL"`
+
+	// LLMModels（L2）：LLM_MODELS 环境变量的原始 JSON，声明具名模型注册表；空则走单 provider（legacy）。
+	LLMModels string `env:"LLM_MODELS"`
 
 	SQLitePath string `env:"SQLITE_PATH" envDefault:"./data/reviews.db"`
 
@@ -71,6 +75,16 @@ type Config struct {
 	// RAG 索引 SQLite 文件路径；空时关闭 Retriever（prctx 跳 L4）
 	// 与 SQLITE_PATH 分开：让 RAG 数据库即使切到 Postgres store 也仍能用 SQLite vector 存
 	RAGDBPath string `env:"RAG_DB_PATH" envDefault:"./data/rag.db"`
+}
+
+// ModelConfig LLM_MODELS JSON 数组的一项（L2 注册表）。
+// api_key_env 是存放该端点 key 的环境变量名 —— secret 不内联进 JSON，避免出现在配置 / 日志里。
+type ModelConfig struct {
+	Key       string `json:"key"`         // 注册表 key（请求 / 按阶段引用用）
+	Label     string `json:"label"`       // 前端展示名
+	BaseURL   string `json:"base_url"`    // OpenAI 兼容端点
+	APIKeyEnv string `json:"api_key_env"` // 取 key 的环境变量名
+	Model     string `json:"model"`       // 该端点下的模型名
 }
 
 // MustLoad 解析环境变量；失败则打印错误并退出进程。

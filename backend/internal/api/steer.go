@@ -278,9 +278,10 @@ func PostSteer(d Deps) gin.HandlerFunc {
 		})
 		c.Writer.Flush()
 
-		// 按阶段模型构造 stage（与 mergeStages 同一套 L1 路由）；stageKey 已过白名单校验
-		stage, _ := newStage(stageKey, d.StageModels[stageKey])
-		events, err := stage.Run(ctx, pCtx, d.Provider)
+		// 按阶段经注册表解析 (provider, model)（与 mergeStages 同一套路由）；stageKey 已过白名单校验
+		prov, model := resolveProvider(d.Provider, d.Models, d.StageModels[stageKey])
+		stage, _ := newStage(stageKey, model)
+		events, err := stage.Run(ctx, pCtx, prov)
 		if err != nil {
 			writeSSE(c.Writer, "error", map[string]string{
 				"stage":   "steer:" + stageKey,
