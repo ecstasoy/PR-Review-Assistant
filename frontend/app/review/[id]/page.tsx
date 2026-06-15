@@ -96,6 +96,13 @@ function ReviewDetailPageContent({ id }: { id: string }) {
   const scrollRef = useRef<HTMLElement>(null);
   const pendingScroll = useRef<string | null>(null);
 
+  // 移动端（< lg）默认收起侧栏，让主区占满；桌面保持展开。仅 mount 时判定一次。
+  useEffect(() => {
+    if (window.matchMedia("(max-width: 1023px)").matches) {
+      setSidebarCollapsed(true);
+    }
+  }, []);
+
   // 拉数据：cached 模式 getReview；streaming 模式 streamReview
   useEffect(() => {
     let cancelled = false;
@@ -318,18 +325,29 @@ function ReviewDetailPageContent({ id }: { id: string }) {
         onToggleAgent={() => setAgentOpen((o) => !o)}
         agentOpen={agentOpen}
       />
-      <div className="flex min-h-0 flex-1">
-        {sidebarCollapsed ? null : view === "session" ? (
-          <SessionList activeId={isStreaming ? undefined : id} />
-        ) : (
-          <Sidebar
-            pr={pr}
-            files={files}
-            risks={risks}
-            activeFile={activeFile}
-            onPickFile={pickFile}
-            onPickRisk={pickRisk}
-          />
+      <div className="relative flex min-h-0 flex-1">
+        {sidebarCollapsed ? null : (
+          <>
+            {/* 移动端：半透明遮罩，点击收起抽屉式侧栏 */}
+            <button
+              type="button"
+              aria-label="关闭侧栏"
+              onClick={() => setSidebarCollapsed(true)}
+              className="absolute inset-0 z-30 bg-black/40 lg:hidden"
+            />
+            {view === "session" ? (
+              <SessionList activeId={isStreaming ? undefined : id} />
+            ) : (
+              <Sidebar
+                pr={pr}
+                files={files}
+                risks={risks}
+                activeFile={activeFile}
+                onPickFile={pickFile}
+                onPickRisk={pickRisk}
+              />
+            )}
+          </>
         )}
         <main ref={scrollRef} className="min-w-0 flex-1 overflow-y-auto">
           <div className="mx-auto flex max-w-[1080px] flex-col gap-4 px-5 py-5">
@@ -383,10 +401,19 @@ function ReviewDetailPageContent({ id }: { id: string }) {
           </div>
         </main>
         {agentOpen ? (
-          <AgentPanel
-            onClose={() => setAgentOpen(false)}
-            reviewId={effectiveReviewID ?? undefined}
-          />
+          <>
+            {/* 移动端：半透明遮罩，点击收起抽屉式追问面板 */}
+            <button
+              type="button"
+              aria-label="关闭追问面板"
+              onClick={() => setAgentOpen(false)}
+              className="absolute inset-0 z-30 bg-black/40 lg:hidden"
+            />
+            <AgentPanel
+              onClose={() => setAgentOpen(false)}
+              reviewId={effectiveReviewID ?? undefined}
+            />
+          </>
         ) : null}
       </div>
     </div>

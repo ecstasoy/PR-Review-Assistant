@@ -31,7 +31,7 @@ export function SessionList({ activeId }: Props) {
   const groups = bucketByWhen(items ?? []);
 
   return (
-    <aside className="flex h-full w-[256px] shrink-0 flex-col border-r border-border bg-surface">
+    <aside className="absolute inset-y-0 left-0 z-40 flex h-full w-[84%] max-w-xs flex-col border-r border-border bg-surface lg:static lg:z-auto lg:w-[256px] lg:max-w-none lg:shrink-0">
       <div className="border-b border-border p-2.5">
         <Link
           href="/"

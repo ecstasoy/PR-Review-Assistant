@@ -171,7 +171,7 @@ export function AgentPanel({ onClose, reviewId }: Props) {
   }
 
   return (
-    <aside className="flex h-full w-[360px] shrink-0 flex-col border-l border-border bg-surface">
+    <aside className="absolute inset-y-0 right-0 z-40 flex h-full w-full max-w-sm shrink-0 flex-col border-l border-border bg-surface lg:static lg:z-auto lg:w-[360px] lg:max-w-none">
       <header className="flex items-center gap-2 border-b border-border px-3 py-2.5">
         <span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-md bg-accent text-accent-fg">
           <Sparkle className="h-[13px] w-[13px]" fill="currentColor" />
