@@ -38,6 +38,9 @@ type Deps struct {
 	// StageModels 按 stage name（summary/risks/suggestions）的模型覆盖；
 	// 空 map / 空值走 provider 默认（L1 按阶段模型路由）。
 	StageModels map[string]string
+	// Models 具名模型注册表（L2）；非 nil 时按阶段 / 按请求经它解析 (provider, model)。
+	// nil 时回退到 Provider（兼容旧调用与单测）。
+	Models *llm.Registry
 }
 
 // RegisterWithSecret 同 Register 但接受 webhook secret 显式注入
