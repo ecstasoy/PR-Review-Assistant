@@ -42,7 +42,7 @@ export function Sidebar({ pr, files, risks, activeFile, onPickFile, onPickRisk }
   ];
 
   return (
-    <aside className="flex w-64 flex-shrink-0 flex-col overflow-hidden border-r border-border bg-surface">
+    <aside className="absolute inset-y-0 left-0 z-40 flex w-[84%] max-w-xs flex-col overflow-hidden border-r border-border bg-surface lg:static lg:z-auto lg:w-64 lg:max-w-none lg:flex-shrink-0">
       <div className="flex gap-0.5 border-b border-border p-1">
         {tabs.map(({ key, label, icon: Icon, count }) => {
           const active = tab === key;
