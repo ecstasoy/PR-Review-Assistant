@@ -3,12 +3,53 @@ package api
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 
 	gh "github.com/ecstasoy/PR-Review-Assistant/backend/internal/github"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/index"
+	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/llm"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/prctx"
 )
+
+// recordingProvider 记录每次 Stream 收到的 Model，用于验证 per-stage 模型路由。
+type recordingProvider struct {
+	mu     sync.Mutex
+	models []string
+}
+
+func (p *recordingProvider) Stream(_ context.Context, req llm.Request) (<-chan llm.Chunk, error) {
+	p.mu.Lock()
+	p.models = append(p.models, req.Model)
+	p.mu.Unlock()
+	ch := make(chan llm.Chunk)
+	close(ch) // 空流：本测试只关心 Model 是否被透传，不关心 stage 后续解析
+	return ch, nil
+}
+
+// mergeStages 应把每个 stage 的模型透传给 provider（L1 按阶段模型路由）。
+func TestMergeStages_RoutesPerStageModels(t *testing.T) {
+	p := &recordingProvider{}
+	base := prctx.Context{L1Meta: "x"}
+	ctxByStage := map[string]prctx.Context{"summary": base, "risks": base, "suggestions": base}
+	stageModels := map[string]string{"summary": "m-sum", "risks": "m-risk", "suggestions": "m-sug"}
+
+	for range mergeStages(context.Background(), ctxByStage, p, stageModels) {
+		// drain
+	}
+
+	got := map[string]bool{}
+	p.mu.Lock()
+	for _, m := range p.models {
+		got[m] = true
+	}
+	p.mu.Unlock()
+	for _, want := range []string{"m-sum", "m-risk", "m-sug"} {
+		if !got[want] {
+			t.Errorf("provider 未收到 stage 模型 %q；实际 %v", want, p.models)
+		}
+	}
+}
 
 // recordingBuilder 透传 base Build，但记录 BuildWith 收到的 RAGQuery，便于断言 per-stage 真传了不同 query
 type recordingBuilder struct {

@@ -20,6 +20,12 @@ type Config struct {
 	OpenAIBaseURL string `env:"OPENAI_BASE_URL" envDefault:"https://api.deepseek.com"`
 	LLMModel      string `env:"LLM_MODEL" envDefault:"deepseek-chat"`
 
+	// 按阶段模型路由（L1）：空串则该阶段回退到 LLMModel / provider 默认。
+	// 例：RISKS_MODEL=deepseek-reasoner 让风险阶段用推理模型，summary 仍走快模型。
+	SummaryModel     string `env:"SUMMARY_MODEL"`
+	RisksModel       string `env:"RISKS_MODEL"`
+	SuggestionsModel string `env:"SUGGESTIONS_MODEL"`
+
 	SQLitePath string `env:"SQLITE_PATH" envDefault:"./data/reviews.db"`
 
 	// v3 真部署：PostgresURL 非空时 store 切到 PostgresStore；否则继续走 SQLite。

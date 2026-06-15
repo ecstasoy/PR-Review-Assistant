@@ -17,13 +17,13 @@ import (
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/llm"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/memory"
 	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/prctx"
-	"github.com/ecstasoy/PR-Review-Assistant/backend/internal/review"
 )
 
-// 允许 steer 重跑的 stage 集合。summary 重跑收益低（成本高 + 用户主要追问的是风险点 / 建议），暂不开放。
-var allowedSteerStages = map[string]review.Stage{
-	"risks":       review.RisksStage{},
-	"suggestions": review.SuggestionsStage{},
+// 允许 steer 重跑的 stage 白名单。summary 重跑收益低（成本高 + 用户主要追问的是风险点 / 建议），暂不开放。
+// 实际 Stage 用 newStage 按阶段模型构造（与 mergeStages 同一套 L1 路由）。
+var allowedSteerStages = map[string]bool{
+	"risks":       true,
+	"suggestions": true,
 }
 
 // buildAgentUserPrompt 把 prctx.Context 装到 agent 的 user prompt 里。
@@ -95,7 +95,7 @@ func PostSteer(d Deps) gin.HandlerFunc {
 		if stageKey == "" {
 			stageKey = "risks"
 		}
-		stage, stageOK := allowedSteerStages[stageKey]
+		stageOK := allowedSteerStages[stageKey]
 		if mode == "stage" && !stageOK {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "stage must be one of: risks, suggestions"})
 			return
@@ -278,6 +278,8 @@ func PostSteer(d Deps) gin.HandlerFunc {
 		})
 		c.Writer.Flush()
 
+		// 按阶段模型构造 stage（与 mergeStages 同一套 L1 路由）；stageKey 已过白名单校验
+		stage, _ := newStage(stageKey, d.StageModels[stageKey])
 		events, err := stage.Run(ctx, pCtx, d.Provider)
 		if err != nil {
 			writeSSE(c.Writer, "error", map[string]string{

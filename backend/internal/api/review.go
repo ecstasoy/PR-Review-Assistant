@@ -199,7 +199,7 @@ func PostReview(d Deps) gin.HandlerFunc {
 		// per-stage RAG query：risks/suggestions 重算 L4（用不同 query），summary 用 baseCtx
 		// 多两次 retrieve 调用换更对题的召回；首字节延迟代价 < 200ms
 		ctxByStage := buildPerStageContexts(ctx, builder, pr, pCtx)
-		merged := mergeStages(ctx, ctxByStage, d.Provider)
+		merged := mergeStages(ctx, ctxByStage, d.Provider, d.StageModels)
 
 		// 边推流边收集供后续 cache 写入；stage 任一报错则不写缓存（避免缓存半残结果）
 		var (
@@ -407,17 +407,33 @@ func buildPerStageContexts(
 	return out
 }
 
+// newStage 按 name 造对应 review.Stage 并注入按阶段模型（model 空串走 provider 默认）。
+// ok=false 表示未知 stage 名。供 steer 重跑路径复用同一套按阶段模型路由。
+func newStage(name, model string) (review.Stage, bool) {
+	switch name {
+	case "summary":
+		return review.SummaryStage{Model: model}, true
+	case "risks":
+		return review.RisksStage{Model: model}, true
+	case "suggestions":
+		return review.SuggestionsStage{Model: model}, true
+	default:
+		return nil, false
+	}
+}
+
 // mergeStages 并发跑 summary + risks + suggestions，把各自的事件归并到一个 channel。
 // 任一 stage 失败会发一帧 error event 而非中止整条流。
 // ctxByStage 按 Stage.Name() 选 prctx.Context；缺失 key 回退到 ctxByStage["summary"]
-func mergeStages(ctx context.Context, ctxByStage map[string]prctx.Context, p llm.Provider) <-chan review.Event {
+func mergeStages(ctx context.Context, ctxByStage map[string]prctx.Context, p llm.Provider, stageModels map[string]string) <-chan review.Event {
 	merged := make(chan review.Event, 16)
 	var wg sync.WaitGroup
 
+	// stageModels 可为 nil；nil map 取值得空串，等价于走 provider 默认模型
 	stages := []review.Stage{
-		review.SummaryStage{},
-		review.RisksStage{},
-		review.SuggestionsStage{},
+		review.SummaryStage{Model: stageModels["summary"]},
+		review.RisksStage{Model: stageModels["risks"]},
+		review.SuggestionsStage{Model: stageModels["suggestions"]},
 	}
 	fallback := ctxByStage["summary"]
 	wg.Add(len(stages))

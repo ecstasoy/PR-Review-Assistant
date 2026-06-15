@@ -109,6 +109,16 @@ func buildDeps(cfg config.Config) api.Deps {
 		Provider: provider,
 		// Builder 先占位 NewLayeredBuilder()，等下面构造完 retriever 后再用 WithRetriever 替换
 		Builder: prctx.NewLayeredBuilder(),
+		// 按阶段模型覆盖（L1）：空值走 provider 默认
+		StageModels: map[string]string{
+			"summary":     cfg.SummaryModel,
+			"risks":       cfg.RisksModel,
+			"suggestions": cfg.SuggestionsModel,
+		},
+	}
+	if cfg.SummaryModel != "" || cfg.RisksModel != "" || cfg.SuggestionsModel != "" {
+		slog.Info("per-stage model routing",
+			"summary", cfg.SummaryModel, "risks", cfg.RisksModel, "suggestions", cfg.SuggestionsModel)
 	}
 	// Store 二选一：POSTGRES_URL 非空走 PostgresStore，否则走 SQLite
 	// 失败时仅 warn，handler 已 nil-safe；缓存 + 历史功能降级停用而非整个服务挂

@@ -391,7 +391,7 @@ func runWebhookReview(d Deps, args webhookReviewArgs) {
 	budget := toBudgetPayload(pCtx.BudgetReport)
 
 	ctxByStage := buildPerStageContexts(ctx, builder, pr, pCtx)
-	merged := mergeStages(ctx, ctxByStage, d.Provider)
+	merged := mergeStages(ctx, ctxByStage, d.Provider, d.StageModels)
 
 	var (
 		summaryBuf      strings.Builder
