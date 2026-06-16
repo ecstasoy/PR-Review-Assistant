@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { HeroBanner } from "@/components/landing/HeroBanner";
 import { RecentReviewsList } from "@/components/landing/RecentReviewsList";
 import { UrlInputCard } from "@/components/landing/UrlInputCard";
 import { useMe } from "@/lib/auth";
+import { getModels, type ModelOption } from "@/lib/api";
 
 // HomePage 落地页。提交 URL → 导航 /review/streaming?url=<encoded>，流式渲染由 review 页面驱动。
 // 评审本身无登录门槛；登录解锁的是历史归档 / Toast 通知 / 写回 GitHub 这些。
@@ -15,10 +16,26 @@ export default function HomePage() {
   const router = useRouter();
   const [url, setUrl] = useState("");
   const { me } = useMe();
+  // L3：可选模型白名单（仅多模型时显示选择器）；默认选第一个（= 注册表默认）
+  const [models, setModels] = useState<ModelOption[]>([]);
+  const [model, setModel] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    getModels().then((opts) => {
+      if (cancelled) return;
+      setModels(opts);
+      if (opts.length > 0) setModel(opts[0].key);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function start(target: string) {
-    const encoded = encodeURIComponent(target.trim());
-    router.push(`/review/streaming?url=${encoded}`);
+    const params = new URLSearchParams({ url: target.trim() });
+    if (model) params.set("model", model);
+    router.push(`/review/streaming?${params.toString()}`);
   }
 
   const authenticated = !!me?.authenticated;
@@ -26,7 +43,14 @@ export default function HomePage() {
   return (
     <section className="mx-auto -mt-8 max-w-[720px] pt-[clamp(40px,9vh,96px)] pb-16">
       <HeroBanner />
-      <UrlInputCard value={url} onChange={setUrl} onSubmit={start} />
+      <UrlInputCard
+        value={url}
+        onChange={setUrl}
+        onSubmit={start}
+        models={models}
+        model={model}
+        onModelChange={setModel}
+      />
       {authenticated ? <RecentReviewsList /> : null}
 
       {/* 简介：评审任何 PR 不需要登录；登录归档；装 App 才能写回 GitHub */}

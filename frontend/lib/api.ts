@@ -2,6 +2,24 @@ import type { ReviewDetail, ReviewSummary } from "./types";
 
 // postReview 已废弃 —— 后端 /api/review 改为 SSE，请改用 lib/sse.ts 的 streamReview
 
+// ModelOption /api/models 返回项：可选模型白名单（L3）
+export interface ModelOption {
+  key: string;
+  label: string;
+}
+
+// getModels 拉可选模型列表；失败 / 未配置注册表时返回空数组（前端据此隐藏选择器）
+export async function getModels(): Promise<ModelOption[]> {
+  try {
+    const res = await fetch("/api/models");
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data) ? (data as ModelOption[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 // listReviews 拉历史评审列表
 export async function listReviews(limit?: number): Promise<ReviewSummary[]> {
   const q = typeof limit === "number" ? `?limit=${limit}` : "";
