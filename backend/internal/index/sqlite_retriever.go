@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -59,6 +60,11 @@ func NewSQLiteRetriever(path string, embedder Embedder) (*SQLiteRetriever, error
 			return nil, fmt.Errorf("retriever add pr_number column: %w", err)
 		}
 	}
+	// 折叠旧库里大小写不一致的 scope（GitHub owner/repo 大小写不敏感，曾把同仓拆成两个 scope）
+	if _, err := db.ExecContext(context.Background(), migrateLowercaseScope); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("retriever normalize scope case: %w", err)
+	}
 	return &SQLiteRetriever{db: db, embedder: embedder}, nil
 }
 
@@ -81,6 +87,13 @@ const migrateAddPRNumber = `
 SELECT COUNT(*) FROM pragma_table_info('chunks') WHERE name='pr_number'
 `
 
+// migrateLowercaseScope 把历史大小写不一致的 scope 折叠成小写；冲突时保留已有小写行。幂等。
+const migrateLowercaseScope = `
+INSERT OR IGNORE INTO chunks (scope, path, idx, content, embedding, pr_number)
+  SELECT lower(scope), path, idx, content, embedding, pr_number FROM chunks WHERE scope <> lower(scope);
+DELETE FROM chunks WHERE scope <> lower(scope);
+`
+
 // Close 关闭底层 db。
 func (r *SQLiteRetriever) Close() error { return r.db.Close() }
 
@@ -94,6 +107,7 @@ func (r *SQLiteRetriever) UpsertMany(ctx context.Context, scope string, chunks [
 	if len(chunks) == 0 {
 		return nil
 	}
+	scope = strings.ToLower(scope) // scope 大小写无关，与检索侧一致，避免同仓被拆成两个命名空间
 	texts := make([]string, len(chunks))
 	for i, c := range chunks {
 		texts[i] = c.Content
@@ -139,6 +153,7 @@ func (r *SQLiteRetriever) Retrieve(ctx context.Context, scope, query string, k i
 	if query == "" {
 		return nil, nil
 	}
+	scope = strings.ToLower(scope) // 与写入侧一致：scope 大小写无关
 	qv, err := r.embedder.Embed(ctx, []string{query})
 	if err != nil {
 		return nil, fmt.Errorf("retriever query embed: %w", err)

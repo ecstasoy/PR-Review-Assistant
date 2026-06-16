@@ -2,6 +2,8 @@ package index
 
 import (
 	"context"
+	"database/sql"
+	"path/filepath"
 	"testing"
 )
 
@@ -143,5 +145,60 @@ func TestNewSQLiteRetriever_RejectsNilEmbedder(t *testing.T) {
 	_, err := NewSQLiteRetriever(":memory:", nil)
 	if err == nil {
 		t.Error("expected err on nil embedder")
+	}
+}
+
+// 回归：GitHub owner/repo 大小写不敏感，scope 也应大小写无关；
+// 修复前大写索引 + 小写检索命中 0，导致 L4 召回落空。
+func TestSQLiteRetriever_ScopeCaseInsensitive(t *testing.T) {
+	r := newRetrieverWithMock(t)
+	ctx := context.Background()
+	if err := r.UpsertMany(ctx, "Ecstasoy/PR-Review-Assistant", []Chunk{
+		{Path: "main.go", Idx: 0, Content: "package main\nfunc main() {}"},
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	hits, err := r.Retrieve(ctx, "ecstasoy/pr-review-assistant", "package main\nfunc main() {}", 4)
+	if err != nil {
+		t.Fatalf("retrieve: %v", err)
+	}
+	if len(hits) != 1 || hits[0].File != "main.go" {
+		t.Fatalf("case-insensitive scope failed: got %d hits %+v", len(hits), hits)
+	}
+}
+
+// 回归：旧库里大小写不一致的 scope（修复前写入），打开时应折叠成小写。
+func TestSQLiteRetriever_MigratesMixedCaseScopeOnOpen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rag.db")
+
+	// 裸 DB 塞一条大写 scope 旧数据（绕过 UpsertMany 的归一化）
+	seed, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatalf("open seed: %v", err)
+	}
+	if _, err := seed.Exec(retrieverSchema); err != nil {
+		t.Fatalf("schema: %v", err)
+	}
+	blob := encodeVec([]float32{1, 0, 0})
+	if _, err := seed.Exec(
+		`INSERT INTO chunks(scope, path, idx, content, embedding) VALUES(?,?,?,?,?)`,
+		"Ecstasoy/PR-Review-Assistant", "a.go", 0, "hello", blob,
+	); err != nil {
+		t.Fatalf("seed insert: %v", err)
+	}
+	_ = seed.Close()
+
+	r, err := NewSQLiteRetriever(path, NewMockEmbedder())
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	defer r.Close()
+
+	var scope string
+	if err := r.db.QueryRow(`SELECT DISTINCT scope FROM chunks`).Scan(&scope); err != nil {
+		t.Fatalf("select scope: %v", err)
+	}
+	if scope != "ecstasoy/pr-review-assistant" {
+		t.Errorf("scope not lowercased on open: got %q", scope)
 	}
 }
