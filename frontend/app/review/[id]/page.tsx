@@ -60,6 +60,7 @@ function ReviewDetailPageContent({ id }: { id: string }) {
 
   const isStreaming = id === "streaming";
   const sourceURL = searchParams.get("url");
+  const sourceModel = searchParams.get("model") ?? undefined; // L3：运行时选中的模型 key
 
   // 统一状态形状：cached 模式一次填齐，streaming 模式逐步填
   const [pr, setPr] = useState<PrMeta | null>(null);
@@ -147,7 +148,7 @@ function ReviewDetailPageContent({ id }: { id: string }) {
           setSummaryDone(true);
         },
         onDone: () => !cancelled && (setSummaryDone(true), setStreaming(false)),
-      })
+      }, controller.signal, sourceModel)
         .catch((e) => {
           if (e instanceof DOMException && e.name === "AbortError") return;
           if (!cancelled) setError(e instanceof Error ? e.message : String(e));
@@ -188,7 +189,7 @@ function ReviewDetailPageContent({ id }: { id: string }) {
       cancelled = true;
       controller?.abort();
     };
-  }, [id, isStreaming, sourceURL, retryNonce]);
+  }, [id, isStreaming, sourceURL, sourceModel, retryNonce]);
 
   // 重试：清掉错误与上一轮部分结果，bump retryNonce 触发取数 effect 重跑
   const retry = useCallback(() => {

@@ -103,7 +103,8 @@ func PostReview(d Deps) gin.HandlerFunc {
 		}
 
 		var body struct {
-			URL string `json:"url"`
+			URL   string `json:"url"`
+			Model string `json:"model"` // L3：注册表 key；空=默认模型
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			c.JSON(400, gin.H{"error": "invalid request body"})
@@ -113,6 +114,21 @@ func PostReview(d Deps) gin.HandlerFunc {
 		if url == "" {
 			c.JSON(400, gin.H{"error": "url is required"})
 			return
+		}
+
+		// L3 运行时选模型：model 为注册表 key（空=默认）。非空且不在白名单 → 拒绝（成本 / 安全闸）。
+		model := strings.TrimSpace(body.Model)
+		if model != "" && d.Models != nil && !d.Models.Has(model) {
+			c.JSON(400, gin.H{"error": "未知模型"})
+			return
+		}
+		// 默认模型走缓存（读 + 写）；显式指定的非默认模型绕过缓存——避免与默认结果串同一缓存槽，
+		// 也不写入历史（无 schema 迁移的折中；模型维度入缓存键见「下一步」）。
+		useCache := model == "" || (d.Models != nil && model == d.Models.DefaultKey())
+		// 选中模型时应用到全部 stage；否则沿用部署侧的按阶段配置（L1）。
+		stageModels := d.StageModels
+		if model != "" {
+			stageModels = map[string]string{"summary": model, "risks": model, "suggestions": model}
 		}
 
 		ctx := c.Request.Context()
@@ -156,7 +172,8 @@ func PostReview(d Deps) gin.HandlerFunc {
 		c.Writer.Flush()
 
 		// 缓存命中：同 (owner, repo, pr, head_sha) 有完整结果直接回放，跳过 LLM
-		if d.Store != nil {
+		// 非默认模型 useCache=false → 跳过回放，强制按选中模型重跑
+		if useCache && d.Store != nil {
 			if rec, gerr := d.Store.Get(ctx, pr.Owner, pr.Repo, pr.Number, pr.HeadSHA); gerr != nil {
 				slog.Warn("cache get failed; falling through to stages", "err", gerr)
 			} else if rec != nil {
@@ -199,7 +216,7 @@ func PostReview(d Deps) gin.HandlerFunc {
 		// per-stage RAG query：risks/suggestions 重算 L4（用不同 query），summary 用 baseCtx
 		// 多两次 retrieve 调用换更对题的召回；首字节延迟代价 < 200ms
 		ctxByStage := buildPerStageContexts(ctx, builder, pr, pCtx)
-		merged := mergeStages(ctx, ctxByStage, d.Provider, d.Models, d.StageModels)
+		merged := mergeStages(ctx, ctxByStage, d.Provider, d.Models, stageModels)
 
 		// 边推流边收集供后续 cache 写入；stage 任一报错则不写缓存（避免缓存半残结果）
 		var (
@@ -214,7 +231,7 @@ func PostReview(d Deps) gin.HandlerFunc {
 				return false
 			case ev, ok := <-merged:
 				if !ok {
-					if d.Store != nil && !stageErrObserved && risksData != nil && suggestionsData != nil {
+					if useCache && d.Store != nil && !stageErrObserved && risksData != nil && suggestionsData != nil {
 						if id := persistReview(d.Store, pr, summaryBuf.String(), risksData, suggestionsData, budget, "manual", creatorLogin); id != "" {
 							// 让流式页前端拿到 ULID 启用「💬 评论 / ✅ 提交 / SteerComposer 追问」按钮
 							// （没这帧前端只能等用户回首页点列表条目）

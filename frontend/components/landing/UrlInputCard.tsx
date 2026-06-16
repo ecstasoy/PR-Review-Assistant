@@ -3,6 +3,7 @@
 import { CornerDownLeft, ExternalLink, GitPullRequest, Sparkle } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import type { ModelOption } from "@/lib/api";
 
 // 示例 chip：用本仓自己的 PR（一定能访问 + 装了 LGTM App，可演示采纳按钮）
 // 早期 golang/go + fastapi/fastapi 因 token rate limit / 私权问题被移除
@@ -31,12 +32,25 @@ interface Props {
   onChange: (next: string) => void;
   onSubmit: (url: string) => void;
   disabled?: boolean;
+  // L3：可选模型；≤1 项时不渲染选择器（部署未配多模型时 UI 不变）
+  models?: ModelOption[];
+  model?: string;
+  onModelChange?: (key: string) => void;
 }
 
 // UrlInputCard URL 输入条 + 示例 chips
 // 卡片样式：surface + border-strong + shadow-md（对齐原型）
-export function UrlInputCard({ value, onChange, onSubmit, disabled }: Props) {
+export function UrlInputCard({
+  value,
+  onChange,
+  onSubmit,
+  disabled,
+  models = [],
+  model = "",
+  onModelChange,
+}: Props) {
   const valid = isValidPrUrl(value);
+  const showPicker = models.length > 1;
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -59,6 +73,22 @@ export function UrlInputCard({ value, onChange, onSubmit, disabled }: Props) {
             disabled={disabled}
             className="min-w-0 flex-1 border-none bg-transparent px-0.5 py-1.5 font-mono text-sm text-text outline-none placeholder:text-faint disabled:opacity-60"
           />
+          {showPicker ? (
+            <select
+              value={model}
+              onChange={(e) => onModelChange?.(e.target.value)}
+              disabled={disabled}
+              aria-label="选择评审模型"
+              title="选择评审模型"
+              className="h-9 shrink-0 rounded-md border border-border bg-surface-2 px-2 text-xs text-text-2 outline-none hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {models.map((m) => (
+                <option key={m.key} value={m.key}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          ) : null}
           <button
             type="submit"
             disabled={!valid || disabled}

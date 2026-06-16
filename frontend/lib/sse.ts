@@ -83,11 +83,12 @@ export async function streamReview(
   url: string,
   cb: StreamCallbacks,
   signal?: AbortSignal,
+  model?: string,
 ): Promise<void> {
   const res = await fetch("/api/review", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url }),
+    body: JSON.stringify(model ? { url, model } : { url }),
     signal,
   });
   if (!res.ok) {
