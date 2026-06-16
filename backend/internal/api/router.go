@@ -67,6 +67,7 @@ func registerRoutes(r *gin.Engine, d Deps, webhookSecret string) {
 	g.GET("/health/ready", Readiness(d))
 
 	g.POST("/review", expensive, PostReview(d))
+	g.GET("/models", read, Models(d)) // L3：可选模型白名单
 	g.GET("/reviews", read, ListReviews(d))
 	g.GET("/reviews/:id", read, GetReview(d))
 	g.DELETE("/reviews/:id", read, DeleteReview(d))
