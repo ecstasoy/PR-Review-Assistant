@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LGTM · PR Review Assistant — 15 分钟展示</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0e1013; --panel:#15181c; --ink:#eceef1; --mut:#9aa0a8; --dim:#5b616b; --line:#23262b;
+    --accent:#34d399; --accent-bright:#6ee7b7; --accent-soft:rgba(52,211,153,.10);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    background:var(--bg); color:var(--ink); overflow:hidden;
+    font-family:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .deck{position:fixed;inset:0;z-index:1}
+
+  .slide{position:absolute;inset:0;display:none;flex-direction:column;justify-content:center;padding:9vh 10vw 10vh;}
+  .slide.active{display:flex;animation:fade .4s cubic-bezier(.2,.7,.2,1)}
+  @keyframes fade{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+
+  .kicker{font-size:clamp(11px,1.25vw,14px);letter-spacing:.22em;text-transform:uppercase;
+    color:var(--accent);font-weight:500;margin-bottom:1.4em;display:flex;align-items:center;gap:.8em}
+  .kicker::before{content:'';width:24px;height:1px;background:var(--accent)}
+
+  h1{font-size:clamp(26px,4.5vw,52px);font-weight:600;line-height:1.12;letter-spacing:-.025em;color:var(--ink)}
+  h2{font-size:clamp(22px,3.5vw,40px);font-weight:600;line-height:1.16;letter-spacing:-.02em;color:var(--ink)}
+  .sub{color:var(--mut);font-size:clamp(14px,1.9vw,22px);margin-top:.9em;line-height:1.55;max-width:48ch;font-weight:400}
+  .sub b{color:var(--ink);font-weight:500}
+  .big{font-size:clamp(24px,4.3vw,52px);font-weight:600;line-height:1.24;letter-spacing:-.02em}
+  .hl{color:var(--accent)}
+
+  ul.points{margin-top:1.6em;list-style:none;display:flex;flex-direction:column;gap:.95em;max-width:62ch}
+  ul.points li{font-size:clamp(14px,2vw,23px);padding-left:1.9em;position:relative;color:var(--mut);line-height:1.5;font-weight:400}
+  ul.points li::before{content:'';position:absolute;left:0;top:.66em;width:14px;height:2px;background:var(--accent);opacity:.85}
+  ul.points li b{color:var(--ink);font-weight:500}
+  ul.points li .q{color:var(--dim)}
+
+  code{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;background:rgba(148,163,184,.10);
+    color:var(--accent-bright);padding:.08em .42em;border-radius:4px;font-size:.84em}
+
+  .layers{margin-top:1.6em;max-width:66ch;border-top:1px solid var(--line)}
+  .layer{display:grid;grid-template-columns:50px 1fr;gap:1.3em;align-items:baseline;padding:.7em 0;border-bottom:1px solid var(--line)}
+  .layer .tag{color:var(--accent);font-weight:600;font-size:clamp(14px,1.7vw,20px);letter-spacing:.02em}
+  .layer .desc{font-size:clamp(13px,1.8vw,21px);color:var(--mut);line-height:1.4;font-weight:400}
+  .layer .desc b{color:var(--ink);font-weight:500}
+  .budget{margin-top:1.4em;font-size:clamp(13px,1.7vw,20px);color:var(--mut)}
+  .budget b{color:var(--accent)}
+
+  .algo{margin-top:1.5em;background:var(--panel);border:1px solid var(--line);border-radius:8px;
+    padding:1.05em 1.3em;font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+    font-size:clamp(12px,1.5vw,18px);line-height:1.95;color:var(--ink);max-width:70ch;overflow-x:auto;white-space:pre}
+  .algo .c{color:var(--dim)}
+  .algo .k{color:var(--accent)}
+
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:1.5em 2.8em;margin-top:1.6em}
+  .cols h3{font-size:clamp(13px,1.6vw,18px);color:var(--accent);margin-bottom:.6em;font-weight:500;letter-spacing:.02em}
+  .cols ul{list-style:none;display:flex;flex-direction:column;gap:.5em}
+  .cols li{font-size:clamp(13px,1.55vw,19px);color:var(--mut);padding-left:1.2em;position:relative;line-height:1.45;font-weight:400}
+  .cols li::before{content:'›';position:absolute;left:0;color:var(--accent)}
+  .cols li b{color:var(--ink);font-weight:500}
+
+  .runbook{margin-top:1.4em;display:flex;flex-direction:column;gap:.85em;max-width:64ch}
+  .runbook .step{display:flex;gap:1em;align-items:flex-start;font-size:clamp(14px,1.85vw,22px);color:var(--ink);font-weight:400}
+  .runbook .step .n{counter-increment:step;flex:0 0 auto;width:1.7em;height:1.7em;border-radius:50%;
+    border:1px solid var(--accent);color:var(--accent);display:grid;place-items:center;font-size:.7em;font-weight:600}
+  .runbook{counter-reset:step}
+  .runbook .step .n::before{content:counter(step)}
+  .runbook .step small{color:var(--dim)}
+  .runbook .step b{font-weight:500}
+  .fallback{margin-top:1.5em;padding:.8em 1.1em;border-left:2px solid var(--accent);background:var(--accent-soft);
+    font-size:clamp(12px,1.5vw,18px);color:var(--mut);border-radius:0;max-width:60ch}
+  .fallback b{color:var(--accent);font-weight:500}
+  .switch{font-size:clamp(19px,2.9vw,34px);font-weight:600;color:var(--accent);margin-top:.2em;letter-spacing:-.01em}
+
+  .recap{display:flex;flex-direction:column;gap:.95em;margin-top:1.6em}
+  .recap .r{font-size:clamp(15px,2.1vw,26px);color:var(--ink);display:flex;gap:.8em;align-items:baseline;font-weight:400}
+  .recap .r b{color:var(--accent);font-weight:600;font-variant-numeric:tabular-nums}
+
+  .links{margin-top:1.8em;display:flex;flex-wrap:wrap;gap:.5em 1.8em;font-size:clamp(13px,1.6vw,20px);color:var(--mut);font-weight:400}
+  .links b{color:var(--accent);font-weight:500}
+
+  .cover-title{font-size:clamp(48px,9.5vw,132px);font-weight:600;letter-spacing:-.05em;line-height:.94;color:var(--ink)}
+  .cover-title .dotp{display:inline-block;width:.15em;height:.15em;border-radius:50%;background:var(--accent);
+    margin-left:.14em;vertical-align:.06em;animation:pulse 2.4s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+  svg.diagram{width:100%;max-height:58vh;margin-top:1.2em;display:block}
+
+  #topbar{position:fixed;top:0;left:0;height:2px;width:0;background:var(--accent);z-index:5;transition:width .35s}
+  #footer{position:fixed;bottom:0;left:0;right:0;z-index:5;display:flex;justify-content:space-between;align-items:center;
+    padding:.7em 1.5em;font-size:12px;color:var(--dim);pointer-events:none;font-weight:400}
+  #footer .brand b{color:var(--accent);font-weight:500}
+  #hint{position:fixed;bottom:.6em;left:50%;transform:translateX(-50%);z-index:5;font-size:11px;color:#33373d}
+  #notesbar{position:fixed;left:0;right:0;bottom:0;z-index:6;background:#0a0b0d;border-top:1px solid var(--line);
+    padding:1.1em 10vw;font-size:clamp(12px,1.5vw,16px);color:var(--mut);line-height:1.55;display:none;font-weight:400}
+  body.show-notes #notesbar{display:block}
+  body.show-notes #footer,body.show-notes #hint{opacity:0}
+  .notes{display:none}
+
+  @media print{
+    @page{size:1280px 720px;margin:0}
+    html,body{height:auto;overflow:visible;background:#0e1013}
+    body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    .deck{position:static}
+    .slide{position:relative !important;display:flex !important;opacity:1 !important;inset:auto;
+      width:1280px;height:720px;page-break-after:always;break-after:page;animation:none;overflow:hidden}
+    .slide:last-of-type{page-break-after:auto;break-after:auto}
+    #topbar,#footer,#hint,#notesbar{display:none !important}
+  }
+</style>
+</head>
+<body>
+<div id="topbar"></div>
+
+<div class="deck">
+
+  <!-- 0 · COVER -->
+  <section class="slide" style="align-items:flex-start">
+    <div class="cover-title">LGTM<span class="dotp"></span></div>
+    <p class="sub" style="max-width:52ch;margin-top:1.3em">一个 GitHub PR 评审助手。粘贴 PR，生成<span class="hl">摘要</span>、<span class="hl">风险</span>和<span class="hl">行内建议</span>；装上 GitHub App 后还能自动评审。</p>
+    <div class="links">
+      <span>lgtm-alpha.vercel.app</span>
+      <span style="color:var(--dim)">Go 1.25 / Gin · Next.js 16 / React 19</span>
+    </div>
+    <div class="notes">开场 15 秒。一句话定位：不是又一个"AI 看代码"，而是把"喂给模型什么上下文"当核心问题做的评审助手。报上线地址，开始。</div>
+  </section>
+
+  <!-- 1 · PROBLEM -->
+  <section class="slide">
+    <div class="kicker">问题 · the problem</div>
+    <h1>Code review 是瓶颈，<br>而多数 AI 评审"说正确的废话"。</h1>
+    <ul class="points">
+      <li>人工评审<b>耗时</b>，依赖资深同事的注意力，PR 一多就积压。</li>
+      <li>直接把 <code>diff</code> 丢给 LLM → <b>泛泛而谈</b>：「注意命名」「记得加测试」。</li>
+      <li>模型<b>不懂这个仓库</b>的约定、历史、跨文件关系 → 漏掉真正的风险。</li>
+    </ul>
+    <p class="sub" style="margin-top:1.6em">→ 不是模型不行，是<span class="hl">它看到的太少</span>。</p>
+    <div class="notes">1.5 分钟。建立痛点：评审慢 + AI 评审水。点出关键转折——不是模型不行，是上下文不够。这句直接引到下一页主张。</div>
+  </section>
+
+  <!-- 2 · THESIS -->
+  <section class="slide" style="justify-content:center;align-items:flex-start">
+    <div class="kicker">核心主张 · thesis</div>
+    <p class="big">好评审取决于<span class="hl">上下文</span>，<br>而不是把 diff 丢给模型。</p>
+    <p class="sub" style="margin-top:1.5em;max-width:50ch">所以 LGTM 主要在解决一件事：<b>喂给模型什么</b>。上下文分层、按预算裁剪、按阶段检索。</p>
+    <div class="notes">30 秒。全场记忆锚点，慢一点、停顿一下。后面所有技术都挂在这句上。</div>
+  </section>
+
+  <!-- 3 · OVERVIEW + DEMO -->
+  <section class="slide">
+    <div class="kicker">概览与演示 · overview &amp; demo</div>
+    <h2>粘贴一个 PR，三步拿到一份<span class="hl">带上下文</span>的评审。</h2>
+    <div class="runbook">
+      <div class="step"><span class="n"></span><div><b>输入</b> —— 粘贴一个公开的 GitHub PR 链接</div></div>
+      <div class="step"><span class="n"></span><div><b>生成</b> —— 流式产出：摘要 → 风险列表 → 行内建议</div></div>
+      <div class="step"><span class="n"></span><div><b>查看与追问</b> —— 评审报告 / 改动 Diff / 代理会话，可就此 PR 继续提问</div></div>
+    </div>
+    <p class="sub" style="margin-top:1.6em;color:var(--dim)">lgtm-alpha.vercel.app 现场演示</p>
+    <div class="notes">3–4 分钟，全场重心。【演示动线，仅自己看】① 粘贴提前备好的 PR，点评审；② 摘要流式出来时别等满，边出边讲；③ 切三视图：报告 / Diff / 代理会话；④ 在「代理会话」追问一个跨文件问题，展示 agent 调工具是亮点；⑤ 若有装 App 的仓库，展示 PR 上的 bot 自动评审。兜底：网络 / key 异常 → 切本地录屏 backup.mp4，叙事不变；手机热点备用，录屏先开放后台。</div>
+  </section>
+
+  <!-- 4 · ARCHITECTURE -->
+  <section class="slide">
+    <div class="kicker">整体架构 · architecture</div>
+    <svg class="diagram" viewBox="0 0 1000 430" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="g" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0,9 3.5,0 7" fill="#5b616b"/></marker>
+        <marker id="t" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0,9 3.5,0 7" fill="#34d399"/></marker>
+      </defs>
+      <path d="M94 180 L94 56 L398 56" fill="none" stroke="#3a3f46" stroke-width="1.3" stroke-dasharray="5,4" marker-end="url(#g)"/>
+      <text x="150" y="48" fill="#7b818a" font-size="13">OAuth 登录</text>
+      <line x1="166" y1="220" x2="206" y2="220" stroke="#34d399" stroke-width="2" marker-end="url(#t)"/>
+      <line x1="382" y1="220" x2="426" y2="220" stroke="#34d399" stroke-width="2" marker-end="url(#t)"/>
+      <text x="404" y="202" fill="#9aa0a8" font-size="10" text-anchor="middle">/api/*</text>
+      <text x="404" y="214" fill="#9aa0a8" font-size="10" text-anchor="middle">SSE</text>
+      <line x1="672" y1="200" x2="726" y2="158" stroke="#5b616b" stroke-width="1.6" marker-end="url(#g)"/>
+      <line x1="672" y1="225" x2="726" y2="233" stroke="#5b616b" stroke-width="1.6" marker-end="url(#g)"/>
+      <line x1="672" y1="252" x2="726" y2="308" stroke="#5b616b" stroke-width="1.6" marker-end="url(#g)"/>
+      <line x1="520" y1="150" x2="492" y2="86" stroke="#5b616b" stroke-width="1.6" marker-end="url(#g)"/>
+      <text x="386" y="120" fill="#7b818a" font-size="12">fetch / comment</text>
+      <path d="M560 86 L582 150" fill="none" stroke="#3a3f46" stroke-width="1.6" stroke-dasharray="5,4" marker-end="url(#g)"/>
+      <text x="600" y="120" fill="#7b818a" font-size="12">webhook</text>
+      <rect x="398" y="26" width="204" height="60" rx="8" fill="#15181c" stroke="#2a2e34" stroke-width="1.3"/>
+      <text x="500" y="52" fill="#eceef1" font-size="16" font-weight="600" text-anchor="middle">GitHub</text>
+      <text x="500" y="72" fill="#9aa0a8" font-size="12" text-anchor="middle">PR · OAuth · App / Webhook</text>
+      <rect x="24" y="180" width="142" height="80" rx="8" fill="#15181c" stroke="#2a2e34" stroke-width="1.3"/>
+      <text x="95" y="214" fill="#eceef1" font-size="16" font-weight="600" text-anchor="middle">开发者</text>
+      <text x="95" y="236" fill="#9aa0a8" font-size="12" text-anchor="middle">浏览器</text>
+      <rect x="206" y="170" width="176" height="100" rx="8" fill="#15181c" stroke="#2a2e34" stroke-width="1.3"/>
+      <text x="294" y="206" fill="#eceef1" font-size="16" font-weight="600" text-anchor="middle">Vercel 前端</text>
+      <text x="294" y="228" fill="#9aa0a8" font-size="12" text-anchor="middle">Next.js 16</text>
+      <text x="294" y="246" fill="#9aa0a8" font-size="12" text-anchor="middle">SSE 流式渲染</text>
+      <rect x="426" y="148" width="246" height="138" rx="10" fill="rgba(52,211,153,.08)" stroke="#34d399" stroke-width="2"/>
+      <text x="549" y="184" fill="#eceef1" font-size="17" font-weight="600" text-anchor="middle">Fly 后端 · Go/Gin</text>
+      <text x="549" y="212" fill="#6ee7b7" font-size="13.5" text-anchor="middle">分层上下文 L1–L4</text>
+      <text x="549" y="234" fill="#6ee7b7" font-size="13.5" text-anchor="middle">RAG 召回 · 三阶段并发</text>
+      <text x="549" y="258" fill="#9aa0a8" font-size="12" text-anchor="middle">agent 追问 · 模型路由</text>
+      <rect x="726" y="126" width="248" height="62" rx="8" fill="#15181c" stroke="#2a2e34" stroke-width="1.3"/>
+      <text x="850" y="152" fill="#eceef1" font-size="15" font-weight="600" text-anchor="middle">LLM Provider</text>
+      <text x="850" y="172" fill="#9aa0a8" font-size="12" text-anchor="middle">DeepSeek / OpenAI 兼容</text>
+      <rect x="726" y="202" width="248" height="62" rx="8" fill="#15181c" stroke="#2a2e34" stroke-width="1.3"/>
+      <text x="850" y="228" fill="#eceef1" font-size="15" font-weight="600" text-anchor="middle">Store · RAG DB</text>
+      <text x="850" y="248" fill="#9aa0a8" font-size="12" text-anchor="middle">SQLite / Postgres · 向量</text>
+      <rect x="726" y="278" width="248" height="58" rx="8" fill="#15181c" stroke="#2a2e34" stroke-width="1.3"/>
+      <text x="850" y="303" fill="#eceef1" font-size="15" font-weight="600" text-anchor="middle">Cache</text>
+      <text x="850" y="322" fill="#9aa0a8" font-size="12" text-anchor="middle">Redis / Memory</text>
+    </svg>
+    <div class="notes">1.5 分钟。一句话扫过：浏览器→Vercel 前端→Fly 后端（核心引擎在这）→外接 LLM/存储/缓存，GitHub 双向。强调"核心都在后端那块高亮的框"，下面四页拆它。完整图留 Q&A。</div>
+  </section>
+
+  <!-- 5 · CORE 1 -->
+  <section class="slide">
+    <div class="kicker">核心 ① · 分层上下文</div>
+    <h2>把上下文分成四层，按<span class="hl">预算</span>裁剪。</h2>
+    <div class="layers">
+      <div class="layer"><div class="tag">L1</div><div class="desc"><b>PR 元信息</b> — 标题/正文/作者/标签/分支/文件统计/CI checks　<span class="q">（永久保留）</span></div></div>
+      <div class="layer"><div class="tag">L2</div><div class="desc"><b>Diff</b> — 每个改动文件的 patch hunk</div></div>
+      <div class="layer"><div class="tag">L3</div><div class="desc"><b>项目约定</b> — <code>README</code>/<code>CONTRIBUTING</code>/<code>CLAUDE.md</code>/<code>AGENTS.md</code></div></div>
+      <div class="layer"><div class="tag">L4</div><div class="desc"><b>RAG 召回</b> — 同仓历史代码 chunk（离线索引 + 评审写入）</div></div>
+    </div>
+    <p class="budget">预算约 <b>3 : 4 : 1 : 2</b>　·　L1 永留，L2 保底 <code>floor</code> 不被挤空，超预算文件进 <code>dropped</code> 上报前端。</p>
+    <div class="notes">2 分钟，差异化核心。重点不是"分了四层"，而是"有预算地选"。类比：context window 不是越满越好，是把额度花在最相关的地方。dropped 上报体现透明。</div>
+  </section>
+
+  <!-- 5b · CORE 1 · 预算算法 -->
+  <section class="slide">
+    <div class="kicker">核心 ① · 预算分配算法</div>
+    <h2>每层一个额度，按<span class="hl">固定顺序</span>切。</h2>
+    <div class="algo"><span class="k">limit</span> = 48000   <span class="c"># 64K 输入 − 16K 输出预留</span>
+<span class="k">L1</span> = tokens(PR 元信息)   <span class="c"># 全留；超 limit 直接报错</span>
+<span class="k">L3</span> = min(limit × 10%,  limit − L1 − 1000)
+<span class="k">L4</span> = min(limit × 20%,  limit − L1 − L3 − 1000)   <span class="c"># RAG 关 → 0</span>
+<span class="k">L2</span> = max(limit − L1 − L3 − L4,  0)   <span class="c"># 装不下 → Dropped</span></div>
+    <p class="budget"><b>L1</b> 最先占且永不压缩　·　<b>1000</b> 是 L2 的保底，谁都不能把它挤空　·　token 按 字符数/3 粗估</p>
+    <div class="notes">~1 分钟，并进核心①的预算讲解里。一句话：额度按固定顺序切——L1 先占且永不动，L3 拿 10%、L4 拿 20%，L2 拿剩下的但保底 1000，所以 L3/L4 再大也挤不空 L2；装不下的文件标 Dropped 告诉前端。token 是字符数/3 粗估，没引真分词器。</div>
+  </section>
+
+  <!-- 6 · CORE 2 -->
+  <section class="slide">
+    <div class="kicker">核心 ② · RAG 召回</div>
+    <h2>RAG 召回<span class="hl">按阶段定制</span> query。</h2>
+    <ul class="points">
+      <li><b>scope = owner/repo</b>：只在本仓库召回，绝不跨仓串数据。</li>
+      <li>本 PR 已在 L2 的文件<b>从 L4 跳过</b>，避免重复占预算。</li>
+      <li>cosine <b>≥ 0.35</b> · top-<b>4</b>，低相关直接过滤。</li>
+      <li>每个阶段<b>不同 query</b>：<span class="q">risks 偏</span> bug/安全/并发；<span class="q">suggestions 偏</span> 重构/性能。</li>
+    </ul>
+    <div class="notes">1 分钟。一句话立住差异：同一个 PR，风险阶段和建议阶段检索的东西不一样。这是"上下文随用途变"的具体体现。</div>
+  </section>
+
+  <!-- 7 · CORE 3 -->
+  <section class="slide">
+    <div class="kicker">核心 ③ · 三阶段并发 + 流式</div>
+    <h2>三个阶段<span class="hl">并发</span>跑，摘要<span class="hl">边写边出</span>。</h2>
+    <ul class="points">
+      <li><code>summary</code> · <code>risks</code> · <code>suggestions</code> 并发，互不阻塞。</li>
+      <li>摘要走<b>流式 markdown</b>（体感快）；风险/建议走 <b>JSON</b>（<code>response_format</code>）。</li>
+      <li>SSE 事件：<code>summary_delta</code> · <code>risks_done</code> · <code>suggestions_done</code> · <code>budget_report</code>。</li>
+      <li>按 <code>head_sha</code> 缓存：同一 commit 直接<b>回放历史结果</b>。</li>
+    </ul>
+    <div class="notes">1 分钟。承接 Demo 里看到的流式效果——这页解释它怎么来的。head_sha 缓存是省钱省时的工程细节，评委爱听。</div>
+  </section>
+
+  <!-- 8 · CORE 4 -->
+  <section class="slide">
+    <div class="kicker">核心 ④ · Agent 追问</div>
+    <h2>评审完还能<span class="hl">追问</span>，但 agent 有<span class="hl">边界</span>。</h2>
+    <ul class="points">
+      <li>ReAct loop：LLM → 调工具 → 结果回灌 → 再调，直到答完。</li>
+      <li><b>PR 沙盒</b>：<code>read_file</code> / <code>list_dir</code> / <code>grep_patches</code> —— 只读<b>本 PR 改动集</b>。</li>
+      <li><b>RAG 工具</b>：<code>search_repo</code> 在仓库 scope 内语义检索。</li>
+      <li>逃出 PR 改动集<b>直接拒绝</b>，不碰本地文件系统。</li>
+    </ul>
+    <div class="notes">1 分钟。卖点是"有边界的 agent"——安全是设计进去的，不是事后补。对评委这是成熟度信号。</div>
+  </section>
+
+  <!-- 9 · PRODUCT -->
+  <section class="slide">
+    <div class="kicker">产品化 · GitHub App 自动评审</div>
+    <h2>push 一个 commit，PR 上自动出现 bot review。</h2>
+    <svg class="diagram" viewBox="0 0 1000 210" xmlns="http://www.w3.org/2000/svg" style="max-height:32vh">
+      <defs><marker id="b" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0,9 3.5,0 7" fill="#5b616b"/></marker></defs>
+      <line x1="192" y1="95" x2="218" y2="95" stroke="#5b616b" stroke-width="1.8" marker-end="url(#b)"/>
+      <line x1="392" y1="95" x2="418" y2="95" stroke="#5b616b" stroke-width="1.8" marker-end="url(#b)"/>
+      <line x1="592" y1="95" x2="618" y2="95" stroke="#5b616b" stroke-width="1.8" marker-end="url(#b)"/>
+      <line x1="792" y1="95" x2="818" y2="95" stroke="#5b616b" stroke-width="1.8" marker-end="url(#b)"/>
+      <g font-family="Inter, sans-serif">
+        <rect x="22" y="62" width="170" height="66" rx="8" fill="#15181c" stroke="#2a2e34" stroke-width="1.3"/>
+        <text x="107" y="90" fill="#eceef1" font-size="14" font-weight="600" text-anchor="middle">① opened / push</text>
+        <text x="107" y="110" fill="#9aa0a8" font-size="11.5" text-anchor="middle">或 /lgtm review</text>
+        <rect x="222" y="62" width="170" height="66" rx="8" fill="#15181c" stroke="#2a2e34" stroke-width="1.3"/>
+        <text x="307" y="90" fill="#eceef1" font-size="14" font-weight="600" text-anchor="middle">② Webhook 校验</text>
+        <text x="307" y="110" fill="#9aa0a8" font-size="11.5" text-anchor="middle">HMAC · 202 立即返回</text>
+        <rect x="422" y="62" width="170" height="66" rx="8" fill="#15181c" stroke="#2a2e34" stroke-width="1.3"/>
+        <text x="507" y="90" fill="#eceef1" font-size="14" font-weight="600" text-anchor="middle">③ 后台 goroutine</text>
+        <text x="507" y="110" fill="#9aa0a8" font-size="11.5" text-anchor="middle">fetch→上下文→3阶段</text>
+        <rect x="622" y="62" width="170" height="66" rx="8" fill="rgba(52,211,153,.08)" stroke="#34d399" stroke-width="1.6"/>
+        <text x="707" y="90" fill="#eceef1" font-size="14" font-weight="600" text-anchor="middle">④ bot review</text>
+        <text x="707" y="110" fill="#6ee7b7" font-size="11.5" text-anchor="middle">AppJWT · inline 建议</text>
+        <rect x="822" y="62" width="158" height="66" rx="8" fill="#15181c" stroke="#2a2e34" stroke-width="1.3"/>
+        <text x="901" y="90" fill="#eceef1" font-size="14" font-weight="600" text-anchor="middle">⑤ 通知 + 历史</text>
+        <text x="901" y="110" fill="#9aa0a8" font-size="11.5" text-anchor="middle">站内 toast</text>
+      </g>
+      <text x="500" y="170" fill="#9aa0a8" font-size="12.5" text-anchor="middle">幂等：同 (owner/repo/pr/head_sha) 已评 → 跳过，仅推通知</text>
+    </svg>
+    <ul class="points" style="margin-top:.6em">
+      <li><b>202 先返回</b>再异步评审，避开 GitHub 10s 重试阈值。</li>
+      <li>建议可一键 <b>adopt</b>：评论 → GitHub GraphQL <code>apply</code> 成 commit。</li>
+    </ul>
+    <div class="notes">1.5 分钟。从"工具"升级到"产品"。强调自动化闭环 + 幂等 + 一键应用。时序图细节留 docs。</div>
+  </section>
+
+  <!-- 10 · ENGINEERING -->
+  <section class="slide">
+    <div class="kicker">工程实现 · engineering</div>
+    <h2>存储、缓存、模型都能换，失败优先降级。</h2>
+    <div class="cols">
+      <div>
+        <h3>可替换</h3>
+        <ul>
+          <li>多供应商<b>模型注册表</b> + 按阶段 / 按请求路由</li>
+          <li>存储 SQLite ↔ Postgres</li>
+          <li>缓存 Memory ↔ Redis（跨实例共享）</li>
+        </ul>
+      </div>
+      <div>
+        <h3>稳健</h3>
+        <ul>
+          <li>降级优先：缺 key / store 失败 → 显式 warn + 降级</li>
+          <li>单点失败<b>不拖垮整服务</b>，nil-safe handler</li>
+        </ul>
+      </div>
+      <div>
+        <h3>可观测</h3>
+        <ul>
+          <li>OpenTelemetry traces · Sentry · slog JSON</li>
+          <li>liveness / readiness 双健康检查</li>
+        </ul>
+      </div>
+      <div>
+        <h3>部署</h3>
+        <ul>
+          <li>Fly.io 后端 + Vercel 前端</li>
+          <li>SSE 浏览器直连后端，<b>绕开边缘函数超时</b></li>
+        </ul>
+      </div>
+    </div>
+    <div class="notes">1 分钟。给评委"工程成熟度"信号。别逐条念，挑两点：模型注册表（最近三个 PR 在做）+ 降级优先。其余扫过。</div>
+  </section>
+
+  <!-- 11 · LIMITS -->
+  <section class="slide">
+    <div class="kicker">边界 · known limits</div>
+    <h2>现在的几个限制。</h2>
+    <ul class="points">
+      <li><code>ListFiles</code> 当前只取第一页（<b>≤ 100 文件</b>），超大 PR 会丢后续文件。</li>
+      <li>L2 当前是 patch hunk，<code>FileContext.FullText</code> 字段<b>已预留未接</b>。</li>
+      <li>RAG 是文本 chunk + cosine，还不是<b>真实引用关系</b>。</li>
+    </ul>
+    <div class="notes">45 秒。反直觉但加分：评委看几十个项目，主动讲限制的最可信。语气从容，不是认错，是路线图入口。</div>
+  </section>
+
+  <!-- 12 · FUTURE -->
+  <section class="slide">
+    <div class="kicker">未来方向 · roadmap</div>
+    <h2>接下来想做的几件事。</h2>
+    <ul class="points">
+      <li><b>tree-sitter / LSP / 调用图</b> → 把 RAG 升级成真实的符号引用。</li>
+      <li><b>异步索引 + 队列</b>（worker · Redis Streams · job table），评审不被索引拖慢。</li>
+      <li><b>向量存储升级</b>：pgvector / Qdrant，撑万级以上 chunk。</li>
+      <li><b>评测 harness</b>：误报 / 漏报 / 可应用率 / 成本 —— 用数据驱动模型选择。</li>
+    </ul>
+    <div class="notes">45 秒。挑评测 harness 重点讲——没有评测就没法判断换模型是否真变好，这点最能体现你想清楚了。</div>
+  </section>
+
+  <!-- 13 · CLOSE -->
+  <section class="slide">
+    <div class="kicker">总结 · takeaways</div>
+    <p class="big" style="font-size:clamp(22px,3.6vw,42px)">好评审取决于<span class="hl">上下文</span>。</p>
+    <div class="recap">
+      <div class="r"><b>01</b> 分层上下文 L1–L4，按预算裁剪</div>
+      <div class="r"><b>02</b> agent 追问，带沙盒边界</div>
+      <div class="r"><b>03</b> GitHub App 自动评审</div>
+    </div>
+    <div class="links">
+      <span>lgtm-alpha.vercel.app</span>
+      <span>github.com/ecstasoy/PR-Review-Assistant</span>
+      <span class="hl">谢谢 · Q&amp;A</span>
+    </div>
+    <div class="notes">30 秒。回到那句主张收口，三个记忆点复述一遍，报地址，进 Q&A。Q&A 时可现场开 docs/architecture.html 应对深问。</div>
+  </section>
+
+</div>
+
+<div id="footer">
+  <span class="brand"><b>LGTM</b> · PR Review Assistant</span>
+  <span id="num">1 / 14</span>
+</div>
+<div id="hint">→ / 空格 翻页　·　N 演讲备注　·　F 全屏</div>
+<div id="notesbar"></div>
+
+<script>
+  const slides=[...document.querySelectorAll('.slide')];
+  const bar=document.getElementById('topbar');
+  const num=document.getElementById('num');
+  const notesbar=document.getElementById('notesbar');
+  let i=0;
+  function show(n){
+    i=Math.max(0,Math.min(slides.length-1,n));
+    slides.forEach((s,k)=>s.classList.toggle('active',k===i));
+    bar.style.width=(i/(slides.length-1)*100)+'%';
+    num.textContent=(i+1)+' / '+slides.length;
+    const note=slides[i].querySelector('.notes');
+    notesbar.textContent=note?note.textContent:'';
+  }
+  function next(){show(i+1)} function prev(){show(i-1)}
+  document.addEventListener('keydown',e=>{
+    const k=e.key;
+    if(k==='ArrowRight'||k==='PageDown'||k===' '){e.preventDefault();next();}
+    else if(k==='ArrowLeft'||k==='PageUp'){e.preventDefault();prev();}
+    else if(k==='Home'){e.preventDefault();show(0);}
+    else if(k==='End'){e.preventDefault();show(slides.length-1);}
+    else if(k==='n'||k==='N'){document.body.classList.toggle('show-notes');}
+    else if(k==='f'||k==='F'){if(!document.fullscreenElement){document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen();}else{document.exitFullscreen&&document.exitFullscreen();}}
+  });
+  document.addEventListener('click',e=>{
+    if(e.target.closest('a,button,#notesbar'))return;
+    (e.clientX/window.innerWidth>0.5?next:prev)();
+  });
+  show(0);
+</script>
+</body>
+</html>
